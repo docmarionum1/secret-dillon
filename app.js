@@ -8,21 +8,52 @@ const app = new App({
 
 const games = {};
 
+/**
+ * Randomize array element order in-place.
+ * Using Durstenfeld shuffle algorithm.
+ */
+function shuffleArray(array) {
+    for (var i = array.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var temp = array[i];
+        array[i] = array[j];
+        array[j] = temp;
+    }
+}
 
+const numLibbys = {
+  5: 3,
+  6: 4,
+  7: 4,
+  8: 5,
+  9: 5,
+  10: 6
+}
 
-async function newGame(channel, context) {
-  console.log(context);
-  const members = [];
+async function newGame(channel, context) { 
+  // Get all users in channel
+  let members = [];
+  let cursor = '';
   while (true) {
-    const members = await app.client.conversations.members({
-    token: context.botToken,
-    channel: channel,
-      netx
-  });
+    const response = await app.client.conversations.members({
+      token: context.botToken,
+      channel: channel,
+      cursor: cursor
+    });
+    members = members.concat(response.members);
+    cursor = response.response_metadata.next_cursor;
+    if (cursor === '') break;
   }
   
+  // Filter out bot user
+  members = members.filter((member) => member !== context.botUserId);
   
-  console.log(members);
+  // Shuffle array and pick up to the first 10
+  shuffleArray(members);
+  const players = members.slice(0, 10);
+  
+  console.log(players);
+  
   // await app.client.chat.postMessage({
   //   token: context.botToken,
   //   channel: message.user,
