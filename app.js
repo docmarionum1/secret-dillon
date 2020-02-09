@@ -77,6 +77,7 @@ async function newGame(channel, user, context) {
     manager: 0,
     step: "nominate", // nominate | vote | legislative | executive,
     ineligibleReviewers: [],
+    reviewer: null
   };
   
   async function addPlayer(player, role, message) {
@@ -191,9 +192,15 @@ app.action("new_game", async ({body, ack, respond, context}) => {
 });
 
 app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
-  console.log("hi2");
   ack();
-  console.log(body);
+  const game = GAMES[body.channel.id];
+  
+  if (body.user.id === game.turnOrder[game.manager]) {
+    respond({"delete_original": true});
+    game.reviewer = body.actions[0].value;
+    game.step = "vote";
+  }
+  //console.log(body);
 });
 
 app.message('new', async ({message, context, say}) => {
