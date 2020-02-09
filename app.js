@@ -6,20 +6,22 @@ const app = new App({
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
+const games = {};
 
 
-// All the room in the world for your code
-app.event('team_join', async ({event, context}) => {
-  console.log(event);
-  console.log(context);
-});
 
-app.message('knock', ({message, say}) => {
+
+
+app.message('new', async ({message, context, say}) => {
+  if (message.channel in games) {
+    say("Game already in progress!")
+  }
   console.log(message);
-});
-
-app.message('new', ({message, say}) => {
-  console.log(message);
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: message.user,
+    text: "You are a dillon"
+  });
 });
 
 
