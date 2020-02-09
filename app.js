@@ -105,10 +105,11 @@ async function newGame(channel, user, context) {
   console.log(GAMES);
 }
 
-app.action("new_game", async (obj) => {
+app.action("new_game", async ({body, ack, say, context}) => {
   console.log("hi");
-  obj.ack();
-  console.log(obj);
+  ack();
+  say('');
+  newGame(body.channel.id, body.user.id, context);
 });
 
 app.message('new', async ({message, context, say}) => {
