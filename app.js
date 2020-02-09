@@ -54,6 +54,10 @@ async function newGame(channel, user, context) {
   shuffleArray(members);
   const players = members.slice(0, 10);
   
+  // Get a turn order
+  const turnOrder = players.slice();
+  shuffleArray(turnOrder);
+  
   console.log(players);
   
   if (players.length < 3) {
@@ -67,8 +71,14 @@ async function newGame(channel, user, context) {
   }
   
   const newGame = {
-    players: {}
+    players: {},
+    round: 0,
+    turnOrder: turnOrder,
+    president: 0,
+    step: "election" // election | legislative | executive
   };
+  
+  const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
   
   // Create the Dillon (captial D)
   let player = players.pop();
@@ -81,7 +91,6 @@ async function newGame(channel, user, context) {
   });
   
   // Create the dillons (lowercase d)
-  const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
   for (let i = 0; i < numDillons; i++) {
     player = players.pop();
     newGame.players[player] = "dillon";
@@ -105,10 +114,18 @@ async function newGame(channel, user, context) {
   console.log(GAMES);
 }
 
-app.action("new_game", async ({body, ack, say, context}) => {
+async function printState(channel, context) {
+  if (!(channel in GAMES)) {
+    
+  } else {
+    
+  }
+}
+
+app.action("new_game", async ({body, ack, respond, context}) => {
   console.log("hi");
   ack();
-  say('');
+  respond({"delete_original": true});
   newGame(body.channel.id, body.user.id, context);
 });
 
