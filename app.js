@@ -78,40 +78,44 @@ async function newGame(channel, user, context) {
     step: "election" // election | legislative | executive
   };
   
+  async function addPlayer(player, role, message) {
+    const userInfo = await app.client.users.info({
+      token: context.botToken,
+      user: player,
+    });
+    
+    newGame.players[player] = {
+      role: role,
+      name: userInfo.name,
+      realName: userInfo.real_name
+    };
+    
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: player,
+      text: message
+    });
+  }
+  
   const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
   
   // Create the Dillon (captial D)
   let player = players.pop();
   
-  newGame.players[player] = "Dillon";
-  app.client.chat.postMessage({
-    token: context.botToken,
-    channel: player,
-    text: "You are Dillon (captial D)"
-  });
+  addPlayer(player, "Dillon", "You are Dillon (captial D)");
   
   // Create the dillons (lowercase d)
   for (let i = 0; i < numDillons; i++) {
-    player = players.pop();
-    newGame.players[player] = "dillon";
-    app.client.chat.postMessage({
-      token: context.botToken,
-      channel: player,
-      text: "You are a dillon (lowercase d)"
-    });
+    addPlayer(players.pop(), "dillon", "You are a dillon (lowercase d)");
   }
   
   while(player = players.pop()) {
-    newGame.players[player] = "libby";
-    app.client.chat.postMessage({
-      token: context.botToken,
-      channel: player,
-      text: "You are a libby"
-    });
+    addPlayer(player, "libby", "You are a libby");
   }
   
   GAMES[channel] = newGame;
   console.log(GAMES);
+  printStatus(channel, context);
 }
 
 async function printStatus(channel, context) {
@@ -120,10 +124,22 @@ async function printStatus(channel, context) {
       token: context.botToken,
       channel: channel,
       text: "No game running. Type `new` to start a new game."
-    })
+    });
   } else {
     const game = GAMES[channel];
-    
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: channel,
+      blocks: [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Players*: " + game.turnOrder.join(", ")
+          }
+        },
+      ]
+    });
   }
 }
 
