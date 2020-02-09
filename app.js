@@ -77,7 +77,8 @@ async function newGame(channel, user, context) {
     manager: 0,
     step: "nominate", // nominate | vote | legislative | executive,
     ineligibleReviewers: [],
-    reviewer: null
+    reviewer: null,
+    votes: {}
   };
   
   async function addPlayer(player, role, message) {
@@ -139,6 +140,10 @@ async function printStatus(channel, context) {
     if (game.step === "nominate") {
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
+    } else if (game.step === "vote") {
+      text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
+      text += "\n*Reviewer Candidate*: " + name(game.reviewer);
+      text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair." 
     }
 
     const blocks = [
@@ -171,8 +176,40 @@ async function printStatus(channel, context) {
           };
         })
       })
+    } else if (game.step === "vote") {
+      blocks.push({
+        "type": "divider"
+      });
+      
+      blocks.push({
+        type: "actions",
+        elements: [
+          {
+            type:"button" ,
+            "action_id": "ja",
+            "text": {
+              "type": "plain_text",
+              "text": "Ja!",
+              "emoji": true
+            },
+            "value": "ja",
+            "style": "primary"
+          },
+          {
+            type:"button" ,
+            "action_id": "nein",
+            "text": {
+              "type": "plain_text",
+              "text": "Nein!",
+              "emoji": true
+            },
+            "value": "nein",
+            "style": "danger"
+          }
+        ]
+      })
     }
-    console.log(blocks[2]);
+
     app.client.chat.postMessage({
       token: context.botToken,
       channel: channel,
@@ -199,6 +236,7 @@ app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
     respond({"delete_original": true});
     game.reviewer = body.actions[0].value;
     game.step = "vote";
+    printStatus(body.channel.id, context);
   }
   //console.log(body);
 });
