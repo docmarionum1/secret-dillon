@@ -75,7 +75,8 @@ async function newGame(channel, user, context) {
     round: 0,
     turnOrder: turnOrder,
     manager: 0,
-    step: "nominate" // nominate | vote | legislative | executive
+    step: "nominate", // nominate | vote | legislative | executive,
+    ineligibleReviewers: [],
   };
   
   async function addPlayer(player, role, message) {
@@ -138,19 +139,43 @@ async function printStatus(channel, context) {
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
     }
+
+    const blocks = [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": text
+        }
+      },
+    ];
     
+    if (game.step === "nominate") {
+      const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.turnOrder[game.manager]));
+      blocks.push({
+        "type": "divider"
+      });
+      blocks.push({
+        type: "actions",
+        
+        elements: eligibleReviewers.map(player => {
+          return {
+            type: "button",
+            "action_id": "nominate",
+            text: {
+              type: "plain_text",
+              text: name(player)
+            },
+            "value": player
+          };
+        })
+      })
+    }
+    console.log(blocks[2]);
     app.client.chat.postMessage({
       token: context.botToken,
       channel: channel,
-      blocks: [
-        {
-          "type": "section",
-          "text": {
-            "type": "mrkdwn",
-            "text": text
-          }
-        },
-      ]
+      blocks: blocks
     });
   }
 }
@@ -163,6 +188,11 @@ app.action("new_game", async ({body, ack, respond, context}) => {
   ack();
   respond({"delete_original": true});
   newGame(body.channel.id, body.user.id, context);
+});
+
+app.action("nominate", async(body, ack, respond, context) => {
+  ack();
+  console.log(body);
 });
 
 app.message('new', async ({message, context, say}) => {
