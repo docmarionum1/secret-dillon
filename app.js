@@ -114,16 +114,24 @@ async function newGame(channel, user, context) {
   console.log(GAMES);
 }
 
-async function printState(channel, context) {
+async function printStatus(channel, context) {
   if (!(channel in GAMES)) {
-    
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: channel,
+      text: "No game running. Type `new` to start a new game."
+    })
   } else {
+    const game = GAMES[channel];
     
   }
 }
 
+app.message('status', async ({message, context}) => {
+  printStatus(message.channel, context);
+});
+
 app.action("new_game", async ({body, ack, respond, context}) => {
-  console.log("hi");
   ack();
   respond({"delete_original": true});
   newGame(body.channel.id, body.user.id, context);
