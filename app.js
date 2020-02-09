@@ -74,8 +74,8 @@ async function newGame(channel, user, context) {
     players: {},
     round: 0,
     turnOrder: turnOrder,
-    president: 0,
-    step: "election" // election | legislative | executive
+    manager: 0,
+    step: "nominate" // nominate | vote | legislative | executive
   };
   
   async function addPlayer(player, role, message) {
@@ -83,12 +83,15 @@ async function newGame(channel, user, context) {
       token: context.botToken,
       user: player,
     });
+    console.log(userInfo);
     
     newGame.players[player] = {
       role: role,
-      name: userInfo.name,
-      realName: userInfo.real_name
+      name: userInfo.user.profile.display_name,
+      realName: userInfo.user.profile.real_name
     };
+    
+    console.log(newGame.players[player]);
     
     app.client.chat.postMessage({
       token: context.botToken,
@@ -102,15 +105,15 @@ async function newGame(channel, user, context) {
   // Create the Dillon (captial D)
   let player = players.pop();
   
-  addPlayer(player, "Dillon", "You are Dillon (captial D)");
+  await addPlayer(player, "Dillon", "You are Dillon (captial D)");
   
   // Create the dillons (lowercase d)
   for (let i = 0; i < numDillons; i++) {
-    addPlayer(players.pop(), "dillon", "You are a dillon (lowercase d)");
+    await addPlayer(players.pop(), "dillon", "You are a dillon (lowercase d)");
   }
   
   while(player = players.pop()) {
-    addPlayer(player, "libby", "You are a libby");
+    await addPlayer(player, "libby", "You are a libby");
   }
   
   GAMES[channel] = newGame;
@@ -127,6 +130,18 @@ async function printStatus(channel, context) {
     });
   } else {
     const game = GAMES[channel];
+    
+    function name(player) {
+      return game.players[player].name;
+    }
+    
+    let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
+              "\n*Round*: " + game.round + "\n*Step*: " + game.step;
+    
+    if (game.step === "nominate") {
+      text += 
+    }
+    
     app.client.chat.postMessage({
       token: context.botToken,
       channel: channel,
@@ -135,7 +150,8 @@ async function printStatus(channel, context) {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "*Players*: " + game.turnOrder.join(", ")
+            "text":
+              
           }
         },
       ]
