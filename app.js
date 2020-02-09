@@ -21,7 +21,9 @@ function shuffleArray(array) {
     }
 }
 
-const numLibbys = {
+const NUM_LIBBYS = {
+  3: 1,
+  4: 2,
   5: 3,
   6: 4,
   7: 4,
@@ -30,7 +32,7 @@ const numLibbys = {
   10: 6
 }
 
-async function newGame(channel, context) { 
+async function newGame(channel, user, context) { 
   // Get all users in channel
   let members = [];
   let cursor = '';
@@ -54,11 +56,43 @@ async function newGame(channel, context) {
   
   console.log(players);
   
-  // await app.client.chat.postMessage({
-  //   token: context.botToken,
-  //   channel: message.user,
-  //   text: "You are a dillon"
-  // });
+  if (players.length < 3) {
+    app.client.chat.postEphemeral({
+      token: context.botToken,
+      channel: channel,
+      user: user,
+      text: "Not enough players in the channel. A minimum of 3 is required."
+    });
+    return;
+  }
+  
+  const newGame = {
+    players: {}
+  };
+  
+  // Create the Dillon (captial D)
+  let player = players.pop();
+  
+  newGame.players[player] = "Dillon";
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: player,
+    text: "You are Dillon (captial D)"
+  });
+  
+  // Create the dillons (lowercase d)
+  const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
+  for (let i = 0; i < numDillons; i++) {
+    player = players.pop();
+  }
+  
+  newGame.players[players[1]] = ""
+  
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: message.user,
+    text: "You are a dillon"
+  });
 }
 
 app.message('new', async ({message, context, say}) => {
@@ -89,7 +123,7 @@ app.message('new', async ({message, context, say}) => {
     });
     return;
   } else {
-    newGame(message.channel, context);
+    newGame(message.channel, message.user, context);
   }
 
 });
