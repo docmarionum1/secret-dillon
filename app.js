@@ -158,10 +158,10 @@ async function printStatus(channel, context) {
       blocks.push({
         type: "actions",
         
-        elements: eligibleReviewers.map(player => {
+        elements: eligibleReviewers.map((player, index) => {
           return {
             type: "button",
-            "action_id": "nominate",
+            "action_id": "nominate" + index,
             text: {
               type: "plain_text",
               text: name(player)
@@ -190,7 +190,8 @@ app.action("new_game", async ({body, ack, respond, context}) => {
   newGame(body.channel.id, body.user.id, context);
 });
 
-app.action("nominate", async(body, ack, respond, context) => {
+app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
+  console.log("hi2");
   ack();
   console.log(body);
 });
