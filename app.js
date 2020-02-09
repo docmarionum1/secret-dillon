@@ -6,7 +6,7 @@ const app = new App({
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
-const games = {};
+const GAMES = {};
 
 /**
  * Randomize array element order in-place.
@@ -74,7 +74,7 @@ async function newGame(channel, user, context) {
   let player = players.pop();
   
   newGame.players[player] = "Dillon";
-  await app.client.chat.postMessage({
+  app.client.chat.postMessage({
     token: context.botToken,
     channel: player,
     text: "You are Dillon (captial D)"
@@ -84,19 +84,33 @@ async function newGame(channel, user, context) {
   const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
   for (let i = 0; i < numDillons; i++) {
     player = players.pop();
+    newGame.players[player] = "dillon";
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: player,
+      text: "You are a dillon (lowercase d)"
+    });
   }
   
-  newGame.players[players[1]] = ""
+  while(player = players.pop()) {
+    newGame.players[player] = "libby";
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: player,
+      text: "You are a libby"
+    });
+  }
   
-  await app.client.chat.postMessage({
-    token: context.botToken,
-    channel: message.user,
-    text: "You are a dillon"
-  });
+  GAMES[channel] = newGame;
+  console.log(GAMES);
 }
 
+app.action('new_game', ({event, context}) => {
+  console.log(event);
+});
+
 app.message('new', async ({message, context, say}) => {
-  if (message.channel in games) {
+  if (message.channel in GAMES) {
     app.client.chat.postEphemeral({
       token: context.botToken,
       channel: message.channel,
@@ -109,6 +123,7 @@ app.message('new', async ({message, context, say}) => {
             "text": "A game is already in progress - are you sure you want to end the current game and start a new one?"
           },
           "accessory": {
+            "action_id": "new_game",
             "type": "button",
             "text": {
               "type": "plain_text",
@@ -116,7 +131,7 @@ app.message('new', async ({message, context, say}) => {
               "emoji": true
             },
             "value": "new_game",
-                    "style": "danger"
+            "style": "danger"
           }
         }
       ]
