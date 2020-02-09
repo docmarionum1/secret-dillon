@@ -83,15 +83,12 @@ async function newGame(channel, user, context) {
       token: context.botToken,
       user: player,
     });
-    console.log(userInfo);
     
     newGame.players[player] = {
       role: role,
       name: userInfo.user.profile.display_name,
       realName: userInfo.user.profile.real_name
     };
-    
-    console.log(newGame.players[player]);
     
     app.client.chat.postMessage({
       token: context.botToken,
@@ -104,7 +101,6 @@ async function newGame(channel, user, context) {
   
   // Create the Dillon (captial D)
   let player = players.pop();
-  
   await addPlayer(player, "Dillon", "You are Dillon (captial D)");
   
   // Create the dillons (lowercase d)
@@ -139,7 +135,8 @@ async function printStatus(channel, context) {
               "\n*Round*: " + game.round + "\n*Step*: " + game.step;
     
     if (game.step === "nominate") {
-      text += 
+      text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
+      text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
     }
     
     app.client.chat.postMessage({
@@ -150,8 +147,7 @@ async function printStatus(channel, context) {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text":
-              
+            "text": text
           }
         },
       ]
