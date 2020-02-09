@@ -9,7 +9,18 @@ const app = new App({
 
 
 // All the room in the world for your code
+app.event('team_join', async ({event, context}) => {
+  console.log(event);
+  console.log(context);
+});
 
+app.message('knock', ({message, say}) => {
+  console.log(message);
+});
+
+app.message('new', ({message, say}) => {
+  console.log(message);
+});
 
 
 (async () => {
@@ -18,8 +29,5 @@ const app = new App({
 
   console.log('⚡️ Bolt app is running!');
   
-  app.event('team_join', async ({event, context}) => {
-    console.log(event);
-    console.log(context);
-  });
+
 })();
