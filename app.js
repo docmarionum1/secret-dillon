@@ -317,10 +317,17 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     game.votes = {};
     
     // Check results
-    if (votes.ja.length > votes.nein.length) {
+    if (votes.ja.length > votes.nein.length) { // Majority voted ja
       // Check if the game is over due to Dillon being promoted
       if (checkGameOver(game, context, game.step)) {
         return;
+      }
+      
+      // Set the next ineligible reviewers
+      if (game.turnOrder.length <= 5) {
+        game.ineligibleReviewers = [game.reviewer];
+      } else {
+        game.ineligibleReviewers = [game.manager, game.reviewer];
       }
       
       // Move to the legislative step
@@ -356,7 +363,8 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     sendCards(game, game.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
   } else {
     // Increment the chosen counter
-    game[game.hand.splice(parseInt(index), 1)]++;
+    const chosen = game.hand.splice(parseInt(index), 1);
+    game[chosen]++;
     
     // Put the other card into discard
     game.discard.push(game.hand.pop());
@@ -367,9 +375,27 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     }
     
     // Move to the executive step
-    executive
+    executiveStep(game, context);
   }
 });
+
+function nextRound(game) {
+  game.manager = (game.manager + 1) % game.turnOrder.length;
+  game.step = "nominate";
+  game.reviewer = null;
+  game.promotionTracker = 0;
+}
+
+async function executiveStep(chosen, game, context) {
+  if (chosen === 'accept') {
+    // With accept, there is no executive step, so move to the next round
+    nextRound(game);
+    printStatus(game.channel, context);
+    return;
+  } else {
+    
+  }
+}
 
 async function checkGameOver(game, context, step) {
   let gameOver = false;
@@ -393,7 +419,7 @@ async function checkGameOver(game, context, step) {
 
 async function sendManagerCards(game, context) {
   //const game = GAMES[channel];
-  console.log(game);
+  //console.log(game);
   
   // If the deck has fewer than 3 cards left, shuffle deck and discard together
   if (game.deck.length < 3) {
