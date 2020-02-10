@@ -72,7 +72,7 @@ async function newGame(channel, user, context) {
   
   const newGame = {
     players: {},
-    round: 0,
+    //round: 0,
     turnOrder: turnOrder,
     manager: 0,
     step: "nominate", // nominate | vote | legislative | executive,
@@ -149,8 +149,9 @@ async function printStatus(channel, context, respond) {
     }
     
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
-              "\n*Round*: " + game.round + "\n*Step*: " + game.step +
-              "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" + 
+              //"\n*Round*: " + game.round + "\n*Step*: " + game.step +
+              "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" +
+              "\n*Step*: " + game.step + 
               "\n*Cards in Deck:* " + game.deck.length;
     
     
