@@ -117,7 +117,11 @@ async function newGame(channel, user, context) {
       realName: userInfo.user.profile.real_name
     };
     
-   game[role].push(player);
+    if (role === 'libby') {
+      game.libbys.push(player);
+    } else {
+      game.dillons.push(player);
+    }
   }
   
   const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
@@ -125,7 +129,7 @@ async function newGame(channel, user, context) {
   // Create the Dillon (captial D)
   let player = players.pop();
   game.Dillon = player;
-  await addPlayer(player, "Dillon", "You are Dillon (captial D)");
+  await addPlayer(player, "Dillon");
   
   // Create the dillons (lowercase d)
   for (let i = 0; i < numDillons; i++) {
@@ -146,10 +150,12 @@ async function newGame(channel, user, context) {
         message = "You are a dillon (lowercase d)";
         message += `\nDillon is ${name(game.Dillon)}`;
       } else {
-        message = 
+        message = "You are Dillon (captial D)";
       }
       
-      
+      if (player.role === 'dillon' || game.turnOrder.length <= 6) {
+        message += `\nThe dillons are: ${game.dillons.map(id => name(id))}`;
+      }
     }
     app.client.chat.postMessage({
       token: context.botToken,
