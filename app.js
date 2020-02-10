@@ -150,14 +150,16 @@ async function printStatus(channel, context, respond) {
     
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
               "\n*Round*: " + game.round + "\n*Step*: " + game.step +
+              "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" + 
               "\n*Cards in Deck:* " + game.deck.length;
     
     
     if (game.step === "nominate") {
-      text += "\n*Promotion Tracker*:" + game.promotionTracker;
+      text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
     } else if (game.step === "vote") {
+      text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
       text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
@@ -299,7 +301,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     }
     
     // Print voting results
-    app.client.chat.postMessage({
+    await app.client.chat.postMessage({
       token: context.botToken,
       channel: body.channel.id,
       text: "*Ja*: " + votes.ja.join(", ") + "\n*Nein*: " + votes.nein.join(", ")
@@ -313,7 +315,9 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       game.step = "legislative";
       // TODO start legislative
     } else {
-      
+      game.manager = (game.manager + 1) % game.turnOrder.length;
+      game.step = "nominate";
+      game.reviewer = null;
       game.promotionTracker++;
       if (game.promotionTracker >= 3) {
         const randomResult = game.deck.pop();
@@ -321,6 +325,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
         game.promotionTracker = 0;
       }
     }
+    printStatus(body.channel.id, context);
   } else {
     printStatus(body.channel.id, context, respond);
   }
