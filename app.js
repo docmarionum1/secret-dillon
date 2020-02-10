@@ -120,7 +120,7 @@ async function newGame(channel, user, context) {
   printStatus(channel, context);
 }
 
-async function printStatus(channel, context) {
+async function printStatus(channel, context, respond) {
   if (!(channel in GAMES)) {
     app.client.chat.postMessage({
       token: context.botToken,
@@ -221,11 +221,19 @@ async function printStatus(channel, context) {
       })
     }
 
-    app.client.chat.postMessage({
-      token: context.botToken,
-      channel: channel,
-      blocks: blocks
-    });
+    if (respond) {
+      respond({
+        blocks: blocks,
+        "replace_original": true
+      });
+    } else {
+      app.client.chat.postMessage({
+        token: context.botToken,
+        channel: channel,
+        blocks: blocks
+      });
+    }
+    
   }
 }
 
@@ -256,9 +264,11 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   const game = GAMES[body.channel.id];
   const vote = body.actions[0].value;
   if (vote === "withdraw") {
-    delete 
+    delete game.votes[body.user.id];
+  } else {
+    game.votes[body.user.id] = vote;
   }
-  game.votes[body.user.id] = ;
+  printStatus(body.channel.id, context, respond);
   console.log(body);
   
 });
