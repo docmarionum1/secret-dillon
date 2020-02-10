@@ -78,8 +78,22 @@ async function newGame(channel, user, context) {
     step: "nominate", // nominate | vote | legislative | executive,
     ineligibleReviewers: [],
     reviewer: null,
-    votes: {}
+    votes: {},
+    promotionTracker: 0,
+    deck: [],
+    discard: [],
+    accept: 0,
+    reject: 0
   };
+  
+  // Set up deck
+  for (let i = 0; i < 6; i++) {
+    newGame.deck.push("accept");
+  }
+  for (let i = 0; i < 11; i++) {
+    newGame.deck.push("reject");
+  }
+  shuffleArray(newGame.deck);
   
   async function addPlayer(player, role, message) {
     const userInfo = await app.client.users.info({
@@ -135,9 +149,12 @@ async function printStatus(channel, context, respond) {
     }
     
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
-              "\n*Round*: " + game.round + "\n*Step*: " + game.step;
+              "\n*Round*: " + game.round + "\n*Step*: " + game.step +
+              "\n*Cards in Deck:* " + game.deck.length;
+    
     
     if (game.step === "nominate") {
+      text += "\n*Promotion Tracker*:" + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
     } else if (game.step === "vote") {
@@ -281,8 +298,14 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       votes[game.votes[player]].push(name(player));
     }
     
+    // Print voting results
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: body.channel.id,
+      text: "*Ja*: " + votes.ja.join(", ") + "\n*Nein*: " + votes.nein.join(", ")
+    });
     
-    
+    // Clear votes
     game.votes = {};
     
     // Check results
@@ -291,14 +314,18 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       // TODO start legislative
     } else {
       
-      game.electionTracker++;
-      if (game.electionTracker >= 3) {
-        // TODO 
+      game.promotionTracker++;
+      if (game.promotionTracker >= 3) {
+        const randomResult = game.deck.pop();
+        game[randomResult]++;
+        game.promotionTracker = 0;
       }
     }
+  } else {
+    printStatus(body.channel.id, context, respond);
   }
   
-  printStatus(body.channel.id, context, respond);
+  
   console.log(body);
   
 });
