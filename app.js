@@ -71,6 +71,7 @@ async function newGame(channel, user, context) {
   }
   
   const newGame = {
+    channel: channel,
     players: {},
     //round: 0,
     turnOrder: turnOrder,
@@ -132,7 +133,7 @@ async function newGame(channel, user, context) {
   
   GAMES[channel] = newGame;
   console.log(GAMES);
-  printStatus(channel, context);
+  await printStatus(channel, context);
 }
 
 async function printStatus(channel, context, respond) {
@@ -243,12 +244,12 @@ async function printStatus(channel, context, respond) {
     }
 
     if (respond) {
-      respond({
+      await respond({
         blocks: blocks,
         "replace_original": true
       });
     } else {
-      app.client.chat.postMessage({
+      await app.client.chat.postMessage({
         token: context.botToken,
         channel: channel,
         blocks: blocks
@@ -339,6 +340,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
 
 async function sendManagerCards(game, context) {
   //const game = GAMES[channel];
+  console.log(game);
   
   // If the deck has fewer than 3 cards left, shuffle deck and discard together
   if (game.deck.length < 3) {
@@ -356,6 +358,22 @@ async function sendManagerCards(game, context) {
       {
         type: "section",
         text: "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + "."
+      },
+      {
+        type: "actions",
+        elements: game.hand.map((card, index) => {
+          return {
+            type:"button" ,
+            "action_id": "discard_" + index,
+            "text": {
+              "type": "plain_text",
+              "text": card === "reject" ? "Reject PR" : "Accept PR",
+              "emoji": true
+            },
+            "value": `${game.channel}_${index}`,
+            "style": card === "reject" ? "danger" : "primary"
+          };
+        })
       }
     ]
   })
@@ -390,7 +408,13 @@ app.message('new', async ({message, context, say}) => {
     });
     return;
   } else {
-    newGame(message.channel, message.user, context);
+    await newGame(message.channel, message.user, context);
+    
+    // TODO: Remove below test
+    message.step = "legislative";
+    message.manager = "U0766LV3J";
+    message.reviewer = "U0766LV3J";
+    sendManagerCards(GAMES[message.channel], context);
   }
 
 });
