@@ -213,6 +213,7 @@ async function printStatus(channel, context, respond) {
       },
     ];
     
+    // TODO: Move this out into a function startNominate which will PM the manager with the list of users to choose from
     if (game.step === "nominate") {
       const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.turnOrder[game.manager]));
       blocks.push({
@@ -557,15 +558,18 @@ app.message('new', async ({message, context, say}) => {
     await newGame(message.channel, message.user, context);
     
     // TODO: Remove below test
-    const game = GAMES[message.channel];
-    game.step = "legislative";
-    game.manager = "U0766LV3J";
-    game.reviewer = "U0766LV3J";
-    sendManagerCards(game, context);
+    // const game = GAMES[message.channel];
+    // game.step = "legislative";
+    // game.manager = "U0766LV3J";
+    // game.reviewer = "U0766LV3J";
+    // sendManagerCards(game, context);
   }
 
 });
 
+// TODO: Add game to context with middleware?
+// https://slack.dev/bolt/concepts#global-middleware
+// https://slack.dev/bolt/concepts#context
 
 (async () => {
   // Start your app
