@@ -332,10 +332,11 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   } else {
     printStatus(body.channel.id, context, respond);
   }
-  
-  
-  console.log(body);
-  
+});
+
+app.action(/^discard_\d$/, async ({body, ack, respond, context}) => {
+  const value = body.actions[0].value;
+  const
 });
 
 async function sendManagerCards(game, context) {
@@ -351,13 +352,17 @@ async function sendManagerCards(game, context) {
   // Draw 3 cards into a hand
   game.hand = game.deck.splice(0, 3);
   
+  // Send cards to manager
   app.client.chat.postMessage({
     token: context.botToken,
     channel: game.manager,
     blocks: [
       {
         type: "section",
-        text: "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + "."
+        text: {
+          "type": "mrkdwn",
+          "text": "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + "."
+        } 
       },
       {
         type: "actions",
@@ -411,10 +416,11 @@ app.message('new', async ({message, context, say}) => {
     await newGame(message.channel, message.user, context);
     
     // TODO: Remove below test
-    message.step = "legislative";
-    message.manager = "U0766LV3J";
-    message.reviewer = "U0766LV3J";
-    sendManagerCards(GAMES[message.channel], context);
+    const game = GAMES[message.channel];
+    game.step = "legislative";
+    game.manager = "U0766LV3J";
+    game.reviewer = "U0766LV3J";
+    sendManagerCards(game, context);
   }
 
 });
