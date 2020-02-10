@@ -82,6 +82,7 @@ async function newGame(channel, user, context) {
     promotionTracker: 0,
     deck: [],
     discard: [],
+    hand: [],
     accept: 0,
     reject: 0
   };
@@ -314,7 +315,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     // Check results
     if (votes.ja.length > votes.nein.length) {
       game.step = "legislative";
-      // TODO start legislative
+      sendManagerCards(game, context);
     } else {
       game.manager = (game.manager + 1) % game.turnOrder.length;
       game.step = "nominate";
@@ -335,6 +336,30 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   console.log(body);
   
 });
+
+async function sendManagerCards(game, context) {
+  //const game = GAMES[channel];
+  
+  // If the deck has fewer than 3 cards left, shuffle deck and discard together
+  if (game.deck.length < 3) {
+    game.deck = game.deck.concat(game.discard);
+    shuffleArray(game.deck);
+  }
+  
+  // Draw 3 cards into a hand
+  game.hand = game.deck.splice(0, 3);
+  
+  app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + "."
+      }
+    ]
+  })
+}
 
 app.message('new', async ({message, context, say}) => {
   if (message.channel in GAMES) {
