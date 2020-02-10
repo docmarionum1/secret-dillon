@@ -73,6 +73,7 @@ async function newGame(channel, user, context) {
   const newGame = {
     channel: channel,
     players: {},
+    Dillon: "",
     //round: 0,
     turnOrder: turnOrder,
     manager: 0,
@@ -104,7 +105,8 @@ async function newGame(channel, user, context) {
     });
     
     newGame.players[player] = {
-      role: role,
+      role: role, // dillon | Dillon | libby
+      state: "employed", // employed | fired
       name: userInfo.user.profile.display_name,
       realName: userInfo.user.profile.real_name
     };
@@ -120,6 +122,7 @@ async function newGame(channel, user, context) {
   
   // Create the Dillon (captial D)
   let player = players.pop();
+  newGame.Dillon = player;
   await addPlayer(player, "Dillon", "You are Dillon (captial D)");
   
   // Create the dillons (lowercase d)
@@ -315,6 +318,12 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     
     // Check results
     if (votes.ja.length > votes.nein.length) {
+      // Check if the game is over due to Dillon being promoted
+      if (checkGameOver(game, context, game.step)) {
+        return;
+      }
+      
+      // Move to the legislative step
       game.step = "legislative";
       sendManagerCards(game, context);
     } else {
@@ -353,13 +362,33 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     game.discard.push(game.hand.pop());
     
     // Check if the game is over
-    checkGameOver()
+    if (checkGameOver(game, context)) {
+      return;
+    }
+    
+    // Move to the executive step
+    executive
   }
 });
 
-async function checkGameOver(game, context) {
+async function checkGameOver(game, context, step) {
+  let gameOver = false;
+  if (game.accept >= 5) { // libbys win from 5 accepted PRs
+    gameOver = true;
+  } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
+    gameOver = true;
+  } else if (step && step === 'vote' && game.reject >= 3 && game.players[game.reviewer] === 'Dillon') {
+    // dillons win because Dillon promoted to reviewer after 3 rejected PRs
+    gameOver = true;
+  } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
+    gameOver = true;
+  }
   
-  return false;
+  if (gameOver) {
+    delete GAMES[game.channel];
+  }
+  
+  return gameOver;
 }
 
 async function sendManagerCards(game, context) {
