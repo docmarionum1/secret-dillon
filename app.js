@@ -262,12 +262,42 @@ app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
 app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   ack();
   const game = GAMES[body.channel.id];
+  function name(player) {
+    return game.players[player].name;
+  }
   const vote = body.actions[0].value;
   if (vote === "withdraw") {
     delete game.votes[body.user.id];
   } else {
     game.votes[body.user.id] = vote;
   }
+  
+  // If everyone has voted
+  if (Object.keys(game.votes).length === game.turnOrder.length) {
+    let numNein = 0;
+    let numJa = 0;
+    const votes = {ja: [], nein: []};
+    for (const player in game.votes) {
+      votes[game.votes[player]].push(name(player));
+    }
+    
+    
+    
+    game.votes = {};
+    
+    // Check results
+    if (votes.ja.length > votes.nein.length) {
+      game.step = "legislative";
+      // TODO start legislative
+    } else {
+      
+      game.electionTracker++;
+      if (game.electionTracker >= 3) {
+        // TODO 
+      }
+    }
+  }
+  
   printStatus(body.channel.id, context, respond);
   console.log(body);
   
