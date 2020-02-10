@@ -143,7 +143,8 @@ async function printStatus(channel, context) {
     } else if (game.step === "vote") {
       text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
-      text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair." 
+      text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
+      text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
     }
 
     const blocks = [
@@ -186,7 +187,7 @@ async function printStatus(channel, context) {
         elements: [
           {
             type:"button" ,
-            "action_id": "ja",
+            "action_id": "vote_ja",
             "text": {
               "type": "plain_text",
               "text": "Ja!",
@@ -197,7 +198,7 @@ async function printStatus(channel, context) {
           },
           {
             type:"button" ,
-            "action_id": "nein",
+            "action_id": "vote_nein",
             "text": {
               "type": "plain_text",
               "text": "Nein!",
@@ -205,6 +206,16 @@ async function printStatus(channel, context) {
             },
             "value": "nein",
             "style": "danger"
+          },
+          {
+            type:"button" ,
+            "action_id": "vote_withdraw",
+            "text": {
+              "type": "plain_text",
+              "text": "Withdraw vote",
+              "emoji": true
+            },
+            "value": "withdraw"
           }
         ]
       })
@@ -238,7 +249,18 @@ app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
     game.step = "vote";
     printStatus(body.channel.id, context);
   }
-  //console.log(body);
+});
+
+app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
+  ack();
+  const game = GAMES[body.channel.id];
+  const vote = body.actions[0].value;
+  if (vote === "withdraw") {
+    delete 
+  }
+  game.votes[body.user.id] = ;
+  console.log(body);
+  
 });
 
 app.message('new', async ({message, context, say}) => {
