@@ -70,10 +70,12 @@ async function newGame(channel, user, context) {
     return;
   }
   
-  const newGame = {
+  const game = {
     channel: channel,
     players: {},
     Dillon: "",
+    dillons: [],
+    libbys: [],
     //round: 0,
     turnOrder: turnOrder,
     manager: 0,
@@ -89,28 +91,66 @@ async function newGame(channel, user, context) {
     reject: 0
   };
   
+  function name(player) {
+    return game.players[player].name;
+  }
+  
   // Set up deck
   for (let i = 0; i < 6; i++) {
-    newGame.deck.push("accept");
+    game.deck.push("accept");
   }
   for (let i = 0; i < 11; i++) {
-    newGame.deck.push("reject");
+    game.deck.push("reject");
   }
-  shuffleArray(newGame.deck);
+  shuffleArray(game.deck);
   
-  async function addPlayer(player, role, message) {
+  async function addPlayer(player, role) {
     const userInfo = await app.client.users.info({
       token: context.botToken,
       user: player,
     });
     
-    newGame.players[player] = {
+    game.players[player] = {
       role: role, // dillon | Dillon | libby
       state: "employed", // employed | fired
       name: userInfo.user.profile.display_name,
       realName: userInfo.user.profile.real_name
     };
     
+   game[role].push(player);
+  }
+  
+  const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
+  
+  // Create the Dillon (captial D)
+  let player = players.pop();
+  game.Dillon = player;
+  await addPlayer(player, "Dillon", "You are Dillon (captial D)");
+  
+  // Create the dillons (lowercase d)
+  for (let i = 0; i < numDillons; i++) {
+    await addPlayer(players.pop(), "dillon");
+  }
+  
+  while(player = players.pop()) {
+    await addPlayer(player, "libby");
+  }
+  
+  // Send a message to each player with their identity
+  for (player in game.players) {
+    let message = "";
+    if (player.role === 'libby') {
+      message =  "You are a libby";
+    } else {
+      if (player.role === 'dillon') {
+        message = "You are a dillon (lowercase d)";
+        message += `\nDillon is ${name(game.Dillon)}`;
+      } else {
+        message = 
+      }
+      
+      
+    }
     app.client.chat.postMessage({
       token: context.botToken,
       channel: player,
@@ -118,23 +158,8 @@ async function newGame(channel, user, context) {
     });
   }
   
-  const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
   
-  // Create the Dillon (captial D)
-  let player = players.pop();
-  newGame.Dillon = player;
-  await addPlayer(player, "Dillon", "You are Dillon (captial D)");
-  
-  // Create the dillons (lowercase d)
-  for (let i = 0; i < numDillons; i++) {
-    await addPlayer(players.pop(), "dillon", "You are a dillon (lowercase d)");
-  }
-  
-  while(player = players.pop()) {
-    await addPlayer(player, "libby", "You are a libby");
-  }
-  
-  GAMES[channel] = newGame;
+  GAMES[channel] = game;
   console.log(GAMES);
   await printStatus(channel, context);
 }
@@ -392,8 +417,36 @@ async function executiveStep(chosen, game, context) {
     nextRound(game);
     printStatus(game.channel, context);
     return;
-  } else {
-    
+  }
+  
+  const numPlayers = Object.keys(game.players).length;
+  
+  if (game.reject === 1) {
+    if (numPlayers >= 9) {
+      // Identity
+    }
+  }
+  
+  if (game.reject === 2) {
+    if (numPlayers >= 7) {
+      // Identity
+    }
+  }
+  
+  if (game.reject === 3) {
+    if (numPlayers >= 7) {
+      // Special Promotion Period
+    } else if (numPlayers >= 5) {
+      // Examine
+    }
+  }
+  
+  if (game.reject === 4) {
+    // Fire
+  }
+  
+  if (game.reject === 5) {
+    // Fire
   }
 }
 
