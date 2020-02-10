@@ -334,10 +334,33 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   }
 });
 
-app.action(/^discard_\d$/, async ({body, ack, respond, context}) => {
+app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
+  ack();
+  await respond({"delete_original": true});
   const value = body.actions[0].value;
-  const
+  const [channel, index] = value.split("_");
+  const game = GAMES[channel];
+  
+  // If there are currently 3 cards, it was the manager's pick
+  if (game.hand.length === 3) {
+    game.discard.push(game.hand.splice(parseInt(index), 1));
+    sendCards(game, game.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
+  } else {
+    // Increment the chosen counter
+    game[game.hand.splice(parseInt(index), 1)]++;
+    
+    // Put the other card into discard
+    game.discard.push(game.hand.pop());
+    
+    // Check if the game is over
+    checkGameOver()
+  }
 });
+
+async function checkGameOver(game, context) {
+  
+  return false;
+}
 
 async function sendManagerCards(game, context) {
   //const game = GAMES[channel];
@@ -353,15 +376,19 @@ async function sendManagerCards(game, context) {
   game.hand = game.deck.splice(0, 3);
   
   // Send cards to manager
+  sendCards(game, game.manager, "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + ".", context);
+}
+
+async function sendCards(game, player, instructions, context) {
   app.client.chat.postMessage({
     token: context.botToken,
-    channel: game.manager,
+    channel: player,
     blocks: [
       {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + "."
+          "text": instructions
         } 
       },
       {
@@ -369,7 +396,7 @@ async function sendManagerCards(game, context) {
         elements: game.hand.map((card, index) => {
           return {
             type:"button" ,
-            "action_id": "discard_" + index,
+            "action_id": "selectCard_" + index,
             "text": {
               "type": "plain_text",
               "text": card === "reject" ? "Reject PR" : "Accept PR",
@@ -381,7 +408,7 @@ async function sendManagerCards(game, context) {
         })
       }
     ]
-  })
+  });
 }
 
 app.message('new', async ({message, context, say}) => {
