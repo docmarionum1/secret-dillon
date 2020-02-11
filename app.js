@@ -90,7 +90,8 @@ async function newGame(channel, user, context) {
     hand: [],
     accept: 0,
     reject: 0,
-    name: function(player) {return this.players[player].name;}
+    name: function(player) {return this.players[player].name;},
+    identified: [],
   };
   
   function name(player) {
@@ -455,12 +456,12 @@ async function executiveStep(chosen, game, context) {
 
     if (game.reject === 1) {
       if (numPlayers >= 9) {
-        // Identity
+        sendInvestigateForm(game, context);
         return;
       }
     } else if (game.reject === 2) {
       if (numPlayers >= 7) {
-        // Identity
+        sendInvestigateForm(game, context);
         return;
       }
     } else if (game.reject === 3) {
@@ -487,6 +488,67 @@ async function executiveStep(chosen, game, context) {
   return;
   
 }
+
+
+async function sendInvestigateForm(game, context) {
+  const eligiblePlayers = game.turnOrder.filter(player => (game.identified.indexOf(player) === -1) && (player !== game.manager));
+  
+  // Post message to group channel
+  app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.channel,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `Waiting for ${game.name(game.manager)} to investigate a player.`
+        } 
+      },
+    ]
+  });
+  
+  // Send the manager a form to ask who to investigate
+  app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": "Pick a player to investigate:"
+        } 
+      },
+      {
+        "type": "divider"
+      },
+      {
+        type: "actions",
+        
+        elements: eligiblePlayers.map((player, index) => {
+          return {
+            type: "button",
+            "action_id": "investigate_" + player,
+            text: {
+              type: "plain_text",
+              text: game.name(player)
+            },
+            "value": `${game.channel}_${player}`
+          };
+        })
+      }
+    ]
+  });
+}
+
+app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
+  ack();
+  await respond({"delete_original": true});
+  const value = body.actions[0].value;
+  const [channel, player] = value.split("_");
+  const game = GAMES[channel];
+});
 
 function checkGameOver(game, context, step) {
   let gameOver = false;
