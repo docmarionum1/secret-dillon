@@ -169,7 +169,45 @@ async function newGame(channel, user, context) {
   GAMES[channel] = game;
   console.log(GAMES);
   await printStatus(channel, context);
+  await sendNominationForm(game, context);
 }
+
+async function sendNominationForm(game, context) {
+  const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.manager));
+  
+  app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": "Pick a player to nominate for promotion to reviewer."
+        } 
+      },
+      {
+        "type": "divider"
+      },
+      {
+        type: "actions",
+        
+        elements: eligibleReviewers.map((player, index) => {
+          return {
+            type: "button",
+            "action_id": "nominate_" + index,
+            text: {
+              type: "plain_text",
+              text: name(player)
+            },
+            "value": `${game.channel}_${player}`
+          };
+        })
+      }
+    ]
+  });
+}
+
 
 async function printStatus(channel, context, respond) {
   if (!(channel in GAMES)) {
@@ -215,27 +253,7 @@ async function printStatus(channel, context, respond) {
     ];
     
     // TODO: Move this out into a function startNominate which will PM the manager with the list of users to choose from
-    if (game.step === "nominate") {
-      const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.manager));
-      blocks.push({
-        "type": "divider"
-      });
-      blocks.push({
-        type: "actions",
-        
-        elements: eligibleReviewers.map((player, index) => {
-          return {
-            type: "button",
-            "action_id": "nominate" + index,
-            text: {
-              type: "plain_text",
-              text: name(player)
-            },
-            "value": player
-          };
-        })
-      })
-    } else if (game.step === "vote") {
+    if (game.step === "vote") {
       blocks.push({
         "type": "divider"
       });
@@ -305,16 +323,16 @@ app.action("new_game", async ({body, ack, respond, context}) => {
   newGame(body.channel.id, body.user.id, context);
 });
 
-app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
+app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
   ack();
-  const game = GAMES[body.channel.id];
+  await respond({"delete_original": true});
+  const value = body.actions[0].value;
+  const [channel, player] = value.split("_");
+  const game = GAMES[channel];
   
-  if (body.user.id === game.manager) {
-    respond({"delete_original": true});
-    game.reviewer = body.actions[0].value;
-    game.step = "vote";
-    printStatus(body.channel.id, context);
-  }
+  game.reviewer = player;
+  game.step = "vote";
+  printStatus(body.channel.id, context);
 });
 
 app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
@@ -343,7 +361,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     await app.client.chat.postMessage({
       token: context.botToken,
       channel: body.channel.id,
-      text: "*Ja*: " + votes.ja.join(", ") + "\n*Nein*: " + votes.nein.join(", ")
+      text: "*Voting Results*:\n*Ja*: " + votes.ja.join(", ") + "\n*Nein*: " + votes.nein.join(", ")
     });
     
     // Clear votes
@@ -374,9 +392,10 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
         game[randomResult]++;
         game.promotionTracker = 0;
       }
+      sendNominationForm(game, context);
     }
-    
-    printStatus(body.channel.id, context, respond);
+    await respond({"delete_original": true});
+    printStatus(body.channel.id, context);
   } else {
     printStatus(body.channel.id, context, respond);
   }
@@ -427,6 +446,7 @@ async function executiveStep(chosen, game, context) {
   if (chosen === 'accept') {
     // With accept, there is no executive step, so move to the next round
     nextRound(game);
+    sendNominationForm(game, context);
     printStatus(game.channel, context);
     return;
   }
