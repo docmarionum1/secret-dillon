@@ -493,10 +493,15 @@ async function executiveStep(chosen, game, context) {
   startNextRound(game, context);
 }
 
-
 async function sendInvestigateForm(game, context) {
   const eligiblePlayers = game.turnOrder.filter(player => (game.identified.indexOf(player) === -1) && (player !== game.manager));
+  const groupText = `Waiting for ${game.name(game.manager)} to investigate a player.`;
+  const privateText = `Pick a player to investigate:`;
   
+  
+}
+
+async function sendForm(game, context, type, groupText, privateText) {
   // Post message to group channel
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -506,7 +511,7 @@ async function sendInvestigateForm(game, context) {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": `Waiting for ${game.name(game.manager)} to investigate a player.`
+          "text": groupText
         } 
       },
     ]
@@ -521,7 +526,7 @@ async function sendInvestigateForm(game, context) {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": "Pick a player to investigate:"
+          "text": privateText
         } 
       },
       {
@@ -533,7 +538,7 @@ async function sendInvestigateForm(game, context) {
         elements: eligiblePlayers.map((player, index) => {
           return {
             type: "button",
-            "action_id": "investigate_" + player,
+            "action_id": `${type}` + player,
             text: {
               type: "plain_text",
               text: game.name(player)
@@ -580,7 +585,7 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": `${target_name} is a ${game.players[target].role.lower()}.`
+          "text": `${target_name} is a ${game.players[target].role.toLowerCase()}.`
         } 
       },
     ]
@@ -706,7 +711,7 @@ app.message('new', async ({message, context, say}) => {
     game.manager = "U0766LV3J";
     game.reviewer = "U0766LV3J";
     // sendManagerCards(game, context);
-    sendInvestigateForm(game, context);
+    //sendInvestigateForm(game, context);
   }
 
 });
