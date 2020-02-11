@@ -174,6 +174,7 @@ async function newGame(channel, user, context) {
 }
 
 async function sendNominationForm(game, context) {
+  console.log(game.ineligibleReviewers);
   const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.manager));
   
   app.client.chat.postMessage({
@@ -447,43 +448,43 @@ function nextRound(game) {
 
 async function executiveStep(chosen, game, context) {
   console.log(chosen);
-  if (chosen === 'accept') {
-    // With accept, there is no executive step, so move to the next round
-    nextRound(game);
-    sendNominationForm(game, context);
-    printStatus(game.channel, context);
-    return;
-  }
   
-  const numPlayers = Object.keys(game.players).length;
-  
-  if (game.reject === 1) {
-    if (numPlayers >= 9) {
-      // Identity
+  if (chosen === 'reject') {
+    const numPlayers = Object.keys(game.players).length;
+
+    if (game.reject === 1) {
+      if (numPlayers >= 9) {
+        // Identity
+        return;
+      }
+    } else if (game.reject === 2) {
+      if (numPlayers >= 7) {
+        // Identity
+        return;
+      }
+    } else if (game.reject === 3) {
+      if (numPlayers >= 7) {
+        // Special Promotion Period
+        return;
+      } else if (numPlayers >= 5) {
+        // Examine top of deck
+        return;
+      }
+    } else if (game.reject === 4) {
+      // Fire
+      return;
+    } else if (game.reject === 5) {
+      // Fire
+      return;
     }
   }
   
-  if (game.reject === 2) {
-    if (numPlayers >= 7) {
-      // Identity
-    }
-  }
+  // With accept, there is no executive step, so move to the next round
+  nextRound(game);
+  sendNominationForm(game, context);
+  printStatus(game.channel, context);
+  return;
   
-  if (game.reject === 3) {
-    if (numPlayers >= 7) {
-      // Special Promotion Period
-    } else if (numPlayers >= 5) {
-      // Examine
-    }
-  }
-  
-  if (game.reject === 4) {
-    // Fire
-  }
-  
-  if (game.reject === 5) {
-    // Fire
-  }
 }
 
 function checkGameOver(game, context, step) {
