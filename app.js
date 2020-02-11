@@ -79,6 +79,7 @@ async function newGame(channel, user, context) {
   
   const game = {
     channel: channel,
+    gameId: Math.round(Math.random() * 99999999),
     players: {},
     numPlayers: turnOrder.length,
     Dillon: "",
@@ -238,7 +239,7 @@ async function sendNominationForm(game, context) {
               type: "plain_text",
               text: game.name(player)
             },
-            "value": `${game.channel}_${player}`
+            "value": `${game.channel}_${game.gameId}_${player}`
           };
         })
       }
@@ -367,9 +368,15 @@ app.action("new_game", async ({body, ack, respond, context}) => {
 app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
   ack();
   await respond({"delete_original": true});
+  
   const value = body.actions[0].value;
-  const [channel, player] = value.split("_");
+  const [channel, gameId, player] = value.split("_");
   const game = GAMES[channel];
+  
+  // Make sure the game exists and its for the right game
+  if (!game || game.gameId !== gameId) {
+    return;
+  }
   
   game.reviewer = player;
   game.step = "vote";
@@ -742,10 +749,10 @@ function checkGameOver(game, context, step) {
   } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
     gameOver = true;
     message = ":nollid: dillons win! :dillon:";
-  } else if (step && (step === 'vote') && (game.reject >= 1) && (game.players[game.reviewer].role === 'Dillon')) {
+  } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer].role === 'Dillon')) {
     // dillons win because Dillon promoted to reviewer after 3 rejected PRs
     gameOver = true;
-    message = ":nollid: dillons win! :dillon:";
+    message = `${game.name(game.Dillon)} was Dillon and became code reviewer!\n:nollid: dillons win! :dillon:`;
   } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
     gameOver = true;
     message = `${game.name(game.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
