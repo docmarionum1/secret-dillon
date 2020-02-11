@@ -351,7 +351,8 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     // Check results
     if (votes.ja.length > votes.nein.length) { // Majority voted ja
       // Check if the game is over due to Dillon being promoted
-      if (checkGameOver(game, context, game.step)) {
+      if (checkGameOver(game, context, game.step) === true) {
+        console.log("GameOver");
         return;
       }
       
@@ -460,17 +461,24 @@ async function executiveStep(chosen, game, context) {
 async function checkGameOver(game, context, step) {
   let gameOver = false;
   if (game.accept >= 5) { // libbys win from 5 accepted PRs
+    console.log(1);
     gameOver = true;
   } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
+    console.log(2);
     gameOver = true;
-  } else if (step && step === 'vote' && game.reject >= 3 && game.players[game.reviewer] === 'Dillon') {
+  } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer] === 'Dillon')) {
+    console.log(3);
     // dillons win because Dillon promoted to reviewer after 3 rejected PRs
     gameOver = true;
   } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
+    console.log(4);
     gameOver = true;
   }
   
+  console.log(gameOver);
+  
   if (gameOver) {
+    console.log('hi');
     delete GAMES[game.channel];
   }
   
