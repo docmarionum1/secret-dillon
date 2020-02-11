@@ -475,6 +475,7 @@ async function executiveStep(chosen, game, context) {
     } else if (game.reject === 3) {
       if (numPlayers >= 7) {
         // Special Promotion Period
+        sendSpecialForm(game, context);
         return;
       } else if (numPlayers >= 5) {
         // Examine top of deck
@@ -498,10 +499,18 @@ async function sendInvestigateForm(game, context) {
   const groupText = `Waiting for ${game.name(game.manager)} to investigate a player.`;
   const privateText = `Pick a player to investigate:`;
   
-  
+  await sendForm(game, context, 'investigate', groupText, privateText, eligiblePlayers);
 }
 
-async function sendForm(game, context, type, groupText, privateText) {
+async function sendSpecialForm(game, context) {
+  const eligiblePlayers = game.turnOrder.filter(player => player !== game.manager);
+  const groupText = `Waiting for ${game.name(game.manager)} to nominate a player for a special promotion to manager.`;
+  const privateText = `Pick a player to nominate for special promotion to manager:`;
+
+  await sendForm(game, context, 'special', groupText, privateText, eligiblePlayers);
+}
+
+async function sendForm(game, context, type, groupText, privateText, eligiblePlayers) {
   // Post message to group channel
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -538,7 +547,7 @@ async function sendForm(game, context, type, groupText, privateText) {
         elements: eligiblePlayers.map((player, index) => {
           return {
             type: "button",
-            "action_id": `${type}` + player,
+            "action_id": `${type}_${player}`,
             text: {
               type: "plain_text",
               text: game.name(player)
@@ -593,6 +602,40 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
   
   // Start the next round
   startNextRound(game, context);
+});
+
+app.action(/^special_.*$/, async ({body, ack, respond, context}) => {
+  ack();
+  await respond({"delete_original": true});
+  const value = body.actions[0].value;
+  const [channel, target] = value.split("_");
+  const game = GAMES[channel];
+  
+  const target_name = game.name(target);
+  const manager_name = game.name(game.manager);
+  
+  // Send a message to the group to say who the manager investigated
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.channel,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `${manager_name} nominated ${target_name} to go up for special promotion to manager.`
+        } 
+      },
+    ]
+  });
+  
+  // Start the next round with the special manager and without rotating the manager index
+  game.manager = target;
+  game.step = "nominate";
+  game.reviewer = null;
+  game.promotionTracker = 0;
+  sendNominationForm(game, context);
+  printStatus(game.channel, context);
 });
 
 function checkGameOver(game, context, step) {
@@ -712,6 +755,7 @@ app.message('new', async ({message, context, say}) => {
     game.reviewer = "U0766LV3J";
     // sendManagerCards(game, context);
     //sendInvestigateForm(game, context);
+    sendSpecialForm(game, context);
   }
 
 });
