@@ -89,7 +89,8 @@ async function newGame(channel, user, context) {
     discard: [],
     hand: [],
     accept: 0,
-    reject: 0
+    reject: 0,
+    name: function(player) {return this.players[player].name;}
   };
   
   function name(player) {
@@ -198,7 +199,7 @@ async function sendNominationForm(game, context) {
             "action_id": "nominate_" + index,
             text: {
               type: "plain_text",
-              text: name(player)
+              text: game.name(player)
             },
             "value": `${game.channel}_${player}`
           };
@@ -233,13 +234,15 @@ async function printStatus(channel, context, respond) {
     if (game.step === "nominate") {
       text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.manager);
-      text += "\n*Instructions*: " + name(game.manager) + " nominate a code reviewer";
+      text += "\n*Instructions*: Waiting for " + name(game.manager) + " to nominate a code reviewer";
     } else if (game.step === "vote") {
       text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.manager);
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
       text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
       text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
+    } else if (game.step === "legislative") {
+      text += `\n*Instructions*: Waiting for for ${game.name(game.manager)} and ${game.name(game.reviewer)} to review the PR`;
     }
 
     const blocks = [
@@ -332,7 +335,7 @@ app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
   
   game.reviewer = player;
   game.step = "vote";
-  printStatus(body.channel.id, context);
+  printStatus(game.channel, context);
 });
 
 app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
@@ -414,7 +417,7 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     sendCards(game, game.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
   } else {
     // Increment the chosen counter
-    const chosen = game.hand.splice(parseInt(index), 1);
+    const chosen = game.hand.splice(parseInt(index), 1)[0];
     game[chosen]++;
     
     // Put the other card into discard
@@ -426,7 +429,7 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     }
     
     // Move to the executive step
-    executiveStep(game, context);
+    executiveStep(chosen, game, context);
   }
 });
 
@@ -443,6 +446,7 @@ function nextRound(game) {
 }
 
 async function executiveStep(chosen, game, context) {
+  console.log(chosen);
   if (chosen === 'accept') {
     // With accept, there is no executive step, so move to the next round
     nextRound(game);
