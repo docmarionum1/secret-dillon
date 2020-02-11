@@ -428,6 +428,12 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     // Put the other card into discard
     game.discard.push(game.hand.pop());
     
+    // If the deck has fewer than 3 cards left, shuffle deck and discard together
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+    
     // Check if the game is over
     if (checkGameOver(game, context)) {
       return;
@@ -478,8 +484,7 @@ async function executiveStep(chosen, game, context) {
         sendSpecialForm(game, context);
         return;
       } else if (numPlayers >= 5) {
-        P
-        return;
+        await peak(game, context);
       }
     } else if (game.reject === 4) {
       // Fire
@@ -492,6 +497,22 @@ async function executiveStep(chosen, game, context) {
   
   // With accept, there is no executive step, so move to the next round
   startNextRound(game, context);
+}
+
+async function peak(game, context) {
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `The top 3 cards of the deck are ${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "Reject PR" : "Accept PR").join(", ")}`
+        } 
+      },
+    ]
+  });
 }
 
 async function sendInvestigateForm(game, context) {
@@ -669,15 +690,6 @@ function checkGameOver(game, context, step) {
 }
 
 async function sendManagerCards(game, context) {
-  //const game = GAMES[channel];
-  //console.log(game);
-  
-  // If the deck has fewer than 3 cards left, shuffle deck and discard together
-  if (game.deck.length < 3) {
-    game.deck = game.deck.concat(game.discard);
-    shuffleArray(game.deck);
-  }
-  
   // Draw 3 cards into a hand
   game.hand = game.deck.splice(0, 3);
   
@@ -755,7 +767,8 @@ app.message('new', async ({message, context, say}) => {
     game.reviewer = "U0766LV3J";
     // sendManagerCards(game, context);
     //sendInvestigateForm(game, context);
-    sendSpecialForm(game, context);
+    // sendSpecialForm(game, context);
+    peak(game, context);
   }
 
 });
