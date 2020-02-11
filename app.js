@@ -175,7 +175,8 @@ async function newGame(channel, user, context) {
 
 async function sendNominationForm(game, context) {
   console.log(game.ineligibleReviewers);
-  const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.manager));
+  const eligibleReviewers = game.turnOrder.filter(player => (game.ineligibleReviewers.indexOf(player) === -1) && (player !== game.manager));
+  console.log(eligibleReviewers);
   
   app.client.chat.postMessage({
     token: context.botToken,
@@ -489,11 +490,11 @@ async function executiveStep(chosen, game, context) {
 
 function checkGameOver(game, context, step) {
   let gameOver = false;
+  let message = "";
   if (game.accept >= 5) { // libbys win from 5 accepted PRs
-    console.log(1);
     gameOver = true;
+    message = ":orange: libbys win! :orange:";
   } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
-    console.log(2);
     gameOver = true;
   } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer] === 'Dillon')) {
     console.log(3);
@@ -507,7 +508,6 @@ function checkGameOver(game, context, step) {
   console.log(gameOver);
   
   if (gameOver) {
-    console.log('hi');
     delete GAMES[game.channel];
   }
   
