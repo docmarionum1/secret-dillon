@@ -496,19 +496,23 @@ function checkGameOver(game, context, step) {
     message = ":orange: libbys win! :orange:";
   } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
     gameOver = true;
+    message = ":nollid: dillons win! :dillon:";
   } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer] === 'Dillon')) {
-    console.log(3);
     // dillons win because Dillon promoted to reviewer after 3 rejected PRs
     gameOver = true;
+    message = ":nollid: dillons win! :dillon:";
   } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
-    console.log(4);
     gameOver = true;
+    message = ":orange: libbys win! :orange:";
   }
-  
-  console.log(gameOver);
   
   if (gameOver) {
     delete GAMES[game.channel];
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: game.channel,
+      text: message
+    });
   }
   
   return gameOver;
