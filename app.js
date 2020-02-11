@@ -145,21 +145,23 @@ async function newGame(channel, user, context) {
   
   // Send a message to each player with their identity
   for (player in game.players) {
+    const role = game.players[player].role;
     let message = "";
-    if (player.role === 'libby') {
+    if (role === 'libby') {
       message =  "You are a libby";
     } else {
-      if (player.role === 'dillon') {
+      if (role === 'dillon') {
         message = "You are a dillon (lowercase d)";
         message += `\nDillon is ${name(game.Dillon)}`;
       } else {
         message = "You are Dillon (captial D)";
       }
       
-      if (player.role === 'dillon' || game.turnOrder.length <= 6) {
+      if (role === 'dillon' || game.turnOrder.length <= 6) {
         message += `\nThe dillons are: ${game.dillons.map(id => name(id))}`;
       }
     }
+    
     app.client.chat.postMessage({
       token: context.botToken,
       channel: player,
@@ -448,6 +450,12 @@ function nextRound(game) {
   game.promotionTracker = 0;
 }
 
+function startNextRound(game, context) {
+  nextRound(game);
+  sendNominationForm(game, context);
+  printStatus(game.channel, context);
+}
+
 async function executiveStep(chosen, game, context) {
   console.log(chosen);
   
@@ -482,11 +490,7 @@ async function executiveStep(chosen, game, context) {
   }
   
   // With accept, there is no executive step, so move to the next round
-  nextRound(game);
-  sendNominationForm(game, context);
-  printStatus(game.channel, context);
-  return;
-  
+  startNextRound(game, context);
 }
 
 
@@ -494,7 +498,7 @@ async function sendInvestigateForm(game, context) {
   const eligiblePlayers = game.turnOrder.filter(player => (game.identified.indexOf(player) === -1) && (player !== game.manager));
   
   // Post message to group channel
-  app.client.chat.postMessage({
+  await app.client.chat.postMessage({
     token: context.botToken,
     channel: game.channel,
     blocks: [
@@ -509,7 +513,7 @@ async function sendInvestigateForm(game, context) {
   });
   
   // Send the manager a form to ask who to investigate
-  app.client.chat.postMessage({
+  await app.client.chat.postMessage({
     token: context.botToken,
     channel: game.manager,
     blocks: [
@@ -546,8 +550,44 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
   ack();
   await respond({"delete_original": true});
   const value = body.actions[0].value;
-  const [channel, player] = value.split("_");
+  const [channel, target] = value.split("_");
   const game = GAMES[channel];
+  
+  const target_name = game.name(target);
+  const manager_name = game.name(game.manager);
+  
+  // Send a message to the group to say who the manager investigated
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.channel,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `${manager_name} investigated ${target_name}.`
+        } 
+      },
+    ]
+  });
+  
+  // Send a message to the manager with the target's affilitaion
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `${target_name} is a ${game.players[target].role.lower()}.`
+        } 
+      },
+    ]
+  });
+  
+  // Start the next round
+  startNextRound(game, context);
 });
 
 function checkGameOver(game, context, step) {
@@ -661,11 +701,12 @@ app.message('new', async ({message, context, say}) => {
     await newGame(message.channel, message.user, context);
     
     // TODO: Remove below test
-    // const game = GAMES[message.channel];
+    const game = GAMES[message.channel];
     // game.step = "legislative";
-    // game.manager = "U0766LV3J";
-    // game.reviewer = "U0766LV3J";
+    game.manager = "U0766LV3J";
+    game.reviewer = "U0766LV3J";
     // sendManagerCards(game, context);
+    sendInvestigateForm(game, context);
   }
 
 });
