@@ -478,7 +478,7 @@ async function executiveStep(chosen, game, context) {
         sendSpecialForm(game, context);
         return;
       } else if (numPlayers >= 5) {
-        // Examine top of deck
+        P
         return;
       }
     } else if (game.reject === 4) {
