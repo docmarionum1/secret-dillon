@@ -257,6 +257,7 @@ async function printStatus(channel, context, respond) {
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
               //"\n*Round*: " + game.round + "\n*Step*: " + game.step +
               "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" +
+              "\n*Powers Remaining*:" + 
               "\n*Step*: " + game.step + 
               "\n*Cards in Deck:* " + game.deck.length;
     
@@ -490,17 +491,9 @@ function startNextRound(game, context) {
 async function executiveStep(chosen, game, context) {
   console.log(chosen);
   
-  if (chosen === 'reject') {
-    game.managerialPowers = {
-      1: "investigate",
-      2: "investigate",
-      3: "special",
-      4: "fire",
-      5: "fire"
-    };
-    
+  if (chosen === 'reject') {    
     const power = game.managerialPowers[game.reject];
-    delete game.managerialPowers[game.reject]
+    delete game.managerialPowers[game.reject];
     
     if (power === "investigate") {
       sendInvestigateForm(game, context);
@@ -510,13 +503,13 @@ async function executiveStep(chosen, game, context) {
       return;
     } else if (power === "peak") {
       await peak(game, context);
+      // Peak doesn't block next round
     } else if (power === "fire") {
       // Fire
       return; 
     }
   }
   
-  // With accept, there is no executive step, so move to the next round
   startNextRound(game, context);
 }
 
@@ -562,6 +555,14 @@ async function sendSpecialForm(game, context) {
   const privateText = `Pick a player to nominate for special promotion to manager:`;
 
   await sendForm(game, context, 'special', groupText, privateText, eligiblePlayers);
+}
+
+async function sendFireForm(game, context) {
+  const eligiblePlayers = game.turnOrder.filter(player => player !== game.manager);
+  const groupText = `Waiting for ${game.name(game.manager)} to fire a player.`;
+  const privateText = `Pick a player to fire:`;
+
+  await sendForm(game, context, 'fire', groupText, privateText, eligiblePlayers);
 }
 
 async function sendForm(game, context, type, groupText, privateText, eligiblePlayers) {
@@ -692,6 +693,39 @@ app.action(/^special_.*$/, async ({body, ack, respond, context}) => {
   printStatus(game.channel, context);
 });
 
+app.action(/^fire_.*$/, async ({body, ack, respond, context}) => {
+  ack();
+  await respond({"delete_original": true});
+  const value = body.actions[0].value;
+  const [channel, target] = value.split("_");
+  const game = GAMES[channel];
+  
+  const target_name = game.name(target);
+  const manager_name = game.name(game.manager);
+  
+  // Send a message to the group to say who the manager fired
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.channel,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `☠️ ${manager_name} fired ${target_name} ☠️`
+        } 
+      },
+    ]
+  });
+  
+  game.players[target].state = "fired";
+  game.turnOrder.splice(game.turnOrder.indexOf(target), 1);
+  if (checkGameOver(game, context)) {
+    return;
+  }
+  startNextRound(game, context);
+});
+
 function checkGameOver(game, context, step) {
   let gameOver = false;
   let message = "";
@@ -707,7 +741,7 @@ function checkGameOver(game, context, step) {
     message = ":nollid: dillons win! :dillon:";
   } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
     gameOver = true;
-    message = ":orange: libbys win! :orange:";
+    message = `${game.name(game.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
   }
   
   if (gameOver) {
@@ -801,7 +835,8 @@ app.message('new', async ({message, context, say}) => {
     // sendManagerCards(game, context);
     //sendInvestigateForm(game, context);
     // sendSpecialForm(game, context);
-    peak(game, context);
+    // peak(game, context);
+    // sendFireForm(game, context);
   }
 
 });
