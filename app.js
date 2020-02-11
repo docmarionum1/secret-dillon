@@ -78,7 +78,8 @@ async function newGame(channel, user, context) {
     libbys: [],
     //round: 0,
     turnOrder: turnOrder,
-    manager: 0,
+    managerIndex: 0,
+    manager: turnOrder[0],
     step: "nominate", // nominate | vote | legislative | executive,
     ineligibleReviewers: [],
     reviewer: null,
@@ -193,11 +194,11 @@ async function printStatus(channel, context, respond) {
     
     if (game.step === "nominate") {
       text += "\n*Promotion Tracker*: " + game.promotionTracker;
-      text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
-      text += "\n*Instructions*: " + name(game.turnOrder[game.manager]) + " nominate a code reviewer";
+      text += "\n*Manager Candidate*: " + name(game.manager);
+      text += "\n*Instructions*: " + name(game.manager) + " nominate a code reviewer";
     } else if (game.step === "vote") {
       text += "\n*Promotion Tracker*: " + game.promotionTracker;
-      text += "\n*Manager Candidate*: " + name(game.turnOrder[game.manager]);
+      text += "\n*Manager Candidate*: " + name(game.manager);
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
       text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
       text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
@@ -215,7 +216,7 @@ async function printStatus(channel, context, respond) {
     
     // TODO: Move this out into a function startNominate which will PM the manager with the list of users to choose from
     if (game.step === "nominate") {
-      const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.turnOrder[game.manager]));
+      const eligibleReviewers = game.turnOrder.filter(player => !(player in game.ineligibleReviewers) && (player !== game.manager));
       blocks.push({
         "type": "divider"
       });
@@ -308,7 +309,7 @@ app.action(/^nominate\d+$/, async({body, ack, respond, context}) => {
   ack();
   const game = GAMES[body.channel.id];
   
-  if (body.user.id === game.turnOrder[game.manager]) {
+  if (body.user.id === game.manager) {
     respond({"delete_original": true});
     game.reviewer = body.actions[0].value;
     game.step = "vote";
@@ -351,8 +352,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     // Check results
     if (votes.ja.length > votes.nein.length) { // Majority voted ja
       // Check if the game is over due to Dillon being promoted
-      if (checkGameOver(game, context, game.step) === true) {
-        console.log("GameOver");
+      if (checkGameOver(game, context, game.step)) {
         return;
       }
       
@@ -367,9 +367,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       game.step = "legislative";
       sendManagerCards(game, context);
     } else {
-      game.manager = (game.manager + 1) % game.turnOrder.length;
-      game.step = "nominate";
-      game.reviewer = null;
+      rotateManager(game);
       game.promotionTracker++;
       if (game.promotionTracker >= 3) {
         const randomResult = game.deck.pop();
@@ -377,7 +375,8 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
         game.promotionTracker = 0;
       }
     }
-    printStatus(body.channel.id, context);
+    
+    printStatus(body.channel.id, context, respond);
   } else {
     printStatus(body.channel.id, context, respond);
   }
@@ -412,10 +411,15 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
   }
 });
 
-function nextRound(game) {
-  game.manager = (game.manager + 1) % game.turnOrder.length;
+function rotateManager(game) {
+  game.managerIndex = (game.managerIndex + 1) % game.turnOrder.length;
+  game.manager = game.turnOrder[game.managerIndex];
   game.step = "nominate";
   game.reviewer = null;
+}
+
+function nextRound(game) {
+  rotateManager(game);
   game.promotionTracker = 0;
 }
 
@@ -458,7 +462,7 @@ async function executiveStep(chosen, game, context) {
   }
 }
 
-async function checkGameOver(game, context, step) {
+function checkGameOver(game, context, step) {
   let gameOver = false;
   if (game.accept >= 5) { // libbys win from 5 accepted PRs
     console.log(1);
