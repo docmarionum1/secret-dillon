@@ -30,7 +30,14 @@ const NUM_LIBBYS = {
   8: 5,
   9: 5,
   10: 6
-}
+};
+
+const POWERS = {
+  investigate: "Investigate a player",
+  special: "Special promotion",
+  fire: "Fire a player",
+  peak: "Peak at the top 3 PR cards"
+};
 
 async function newGame(channel, user, context) { 
   // Get all users in channel
@@ -182,8 +189,8 @@ async function newGame(channel, user, context) {
         message = "You are Dillon (captial D)";
       }
       
-      if (role === 'dillon' || game.turnOrder.length <= 6) {
-        message += `\nThe dillons are: ${game.dillons.map(id => name(id))}`;
+      if (role === 'dillon' || game.numPlayers <= 6) {
+        message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => name(id))}`;
       }
     }
     
@@ -257,7 +264,7 @@ async function printStatus(channel, context, respond) {
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
               //"\n*Round*: " + game.round + "\n*Step*: " + game.step +
               "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" +
-              "\n*Powers Remaining*:" + 
+              "\n*Powers Remaining*: " + Object.entries(game.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ") + 
               "\n*Step*: " + game.step + 
               "\n*Cards in Deck:* " + game.deck.length;
     
@@ -735,7 +742,7 @@ function checkGameOver(game, context, step) {
   } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
     gameOver = true;
     message = ":nollid: dillons win! :dillon:";
-  } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer] === 'Dillon')) {
+  } else if (step && (step === 'vote') && (game.reject >= 1) && (game.players[game.reviewer].role === 'Dillon')) {
     // dillons win because Dillon promoted to reviewer after 3 rejected PRs
     gameOver = true;
     message = ":nollid: dillons win! :dillon:";
