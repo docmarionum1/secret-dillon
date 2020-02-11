@@ -73,6 +73,7 @@ async function newGame(channel, user, context) {
   const game = {
     channel: channel,
     players: {},
+    numPlayers: turnOrder.length,
     Dillon: "",
     dillons: [],
     libbys: [],
@@ -92,7 +93,31 @@ async function newGame(channel, user, context) {
     reject: 0,
     name: function(player) {return this.players[player].name;},
     identified: [],
+    managerialPowers: {}
   };
+  
+  if (game.numPlayers >= 9) {
+    game.managerialPowers = {
+      1: "investigate",
+      2: "investigate",
+      3: "special",
+      4: "fire",
+      5: "fire"
+    };
+  } else if (game.numPlayers >= 7) {
+    game.managerialPowers = {
+      2: "investigate",
+      3: "special",
+      4: "fire",
+      5: "fire"
+    };
+  } else if (game.numPlayers >= 5) {
+    game.managerialPowers = {
+      3: "peak",
+      4: "fire",
+      5: "fire"
+    };
+  }
   
   function name(player) {
     return game.players[player].name;
@@ -466,32 +491,28 @@ async function executiveStep(chosen, game, context) {
   console.log(chosen);
   
   if (chosen === 'reject') {
-    const numPlayers = Object.keys(game.players).length;
-
-    if (game.reject === 1) {
-      if (numPlayers >= 9) {
-        sendInvestigateForm(game, context);
-        return;
-      }
-    } else if (game.reject === 2) {
-      if (numPlayers >= 7) {
-        sendInvestigateForm(game, context);
-        return;
-      }
-    } else if (game.reject === 3) {
-      if (numPlayers >= 7) {
-        // Special Promotion Period
-        sendSpecialForm(game, context);
-        return;
-      } else if (numPlayers >= 5) {
-        await peak(game, context);
-      }
-    } else if (game.reject === 4) {
-      // Fire
+    game.managerialPowers = {
+      1: "investigate",
+      2: "investigate",
+      3: "special",
+      4: "fire",
+      5: "fire"
+    };
+    
+    const power = game.managerialPowers[game.reject];
+    delete game.managerialPowers[game.reject]
+    
+    if (power === "investigate") {
+      sendInvestigateForm(game, context);
       return;
-    } else if (game.reject === 5) {
-      // Fire
+    } else if (power === "special") {
+      sendSpecialForm(game, context);
       return;
+    } else if (power === "peak") {
+      await peak(game, context);
+    } else if (power === "fire") {
+      // Fire
+      return; 
     }
   }
   
@@ -508,7 +529,19 @@ async function peak(game, context) {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": `The top 3 cards of the deck are ${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "Reject PR" : "Accept PR").join(", ")}`
+          "text": `The top 3 cards of the deck are \n-${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}` }  },
+    ]
+  });
+  
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.channel,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `Showing ${game.name(game.manager)} the top three cards of the PR deck.`
         } 
       },
     ]
