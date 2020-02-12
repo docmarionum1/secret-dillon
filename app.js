@@ -267,15 +267,14 @@ async function printStatus(channel, context, respond) {
               "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" +
               "\n*Powers Remaining*: " + Object.entries(game.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ") + 
               "\n*Step*: " + game.step + 
-              "\n*Cards in Deck:* " + game.deck.length;
+              "\n*Cards in Deck:* " + game.deck.length +
+              "\n*Promotion Tracker*: " + game.promotionTracker;
     
     
     if (game.step === "nominate") {
-      text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.manager);
       text += "\n*Instructions*: Waiting for " + name(game.manager) + " to nominate a code reviewer";
     } else if (game.step === "vote") {
-      text += "\n*Promotion Tracker*: " + game.promotionTracker;
       text += "\n*Manager Candidate*: " + name(game.manager);
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
       text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
@@ -554,7 +553,15 @@ app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) 
     }
     
     // Send new cards to manager
-    sendManagerCards(game, context);
+    await sendManagerCards(game, context);
+    
+    await app.client.chat.postMessage({
+      token: context.botToken,
+      channel: game.channel,
+      text: `*${game.name(game.reviewer)} and ${game.name(game.manager)} vetoed the PR.*`
+    });
+    
+    await printStatus(game.channel, context);
   } else {
     await sendCards(game, game.reviewer, `${game.name(game.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
     await app.client.chat.postMessage({
@@ -979,8 +986,8 @@ app.message('new', async ({message, context, say}) => {
     // TODO: Remove below test
     const game = GAMES[message.channel];
     // game.step = "legislative";
-    game.manager = "U0766LV3J";
-    game.reviewer = "U0766LV3J";
+    //game.manager = "U0766LV3J";
+    //game.reviewer = "U0766LV3J";
     // sendManagerCards(game, context);
     //sendInvestigateForm(game, context);
     // sendSpecialForm(game, context);
