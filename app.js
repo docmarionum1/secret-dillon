@@ -39,7 +39,7 @@ const POWERS = {
   peak: "Peak at the top 3 PR cards"
 };
 
-async function newGame(channel, user, context) { 
+async function newGame(channel, user, context) {
   // Get all users in channel
   let members = [];
   let cursor = '';
@@ -53,20 +53,20 @@ async function newGame(channel, user, context) {
     cursor = response.response_metadata.next_cursor;
     if (cursor === '') break;
   }
-  
+
   // Filter out bot user
   members = members.filter((member) => member !== context.botUserId);
-  
+
   // Shuffle array and pick up to the first 10
   shuffleArray(members);
   const players = members.slice(0, 10);
-  
+
   // Get a turn order
   const turnOrder = players.slice();
   shuffleArray(turnOrder);
-  
+
   console.log(players);
-  
+
   if (players.length < 3) {
     app.client.chat.postEphemeral({
       token: context.botToken,
@@ -76,7 +76,7 @@ async function newGame(channel, user, context) {
     });
     return;
   }
-  
+
   const game = {
     channel: channel,
     gameId: Math.round(Math.random() * 99999999).toString(),
@@ -103,7 +103,7 @@ async function newGame(channel, user, context) {
     identified: [],
     managerialPowers: {}
   };
-  
+
   if (game.numPlayers >= 9) {
     game.managerialPowers = {
       1: "investigate",
@@ -126,11 +126,11 @@ async function newGame(channel, user, context) {
       5: "fire"
     };
   }
-  
+
   function name(player) {
     return game.players[player].name;
   }
-  
+
   // Set up deck
   for (let i = 0; i < 6; i++) {
     game.deck.push("accept");
@@ -139,43 +139,43 @@ async function newGame(channel, user, context) {
     game.deck.push("reject");
   }
   shuffleArray(game.deck);
-  
+
   async function addPlayer(player, role) {
     const userInfo = await app.client.users.info({
       token: context.botToken,
       user: player,
     });
-    
+
     game.players[player] = {
       role: role, // dillon | Dillon | libby
       state: "employed", // employed | fired
       name: userInfo.user.profile.display_name,
       realName: userInfo.user.profile.real_name
     };
-    
+
     if (role === 'libby') {
       game.libbys.push(player);
     } else {
       game.dillons.push(player);
     }
   }
-  
+
   const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
-  
+
   // Create the Dillon (captial D)
   let player = players.pop();
   game.Dillon = player;
   await addPlayer(player, "Dillon");
-  
+
   // Create the dillons (lowercase d)
   for (let i = 0; i < numDillons; i++) {
     await addPlayer(players.pop(), "dillon");
   }
-  
+
   while(player = players.pop()) {
     await addPlayer(player, "libby");
   }
-  
+
   // Send a message to each player with their identity
   for (player in game.players) {
     const role = game.players[player].role;
@@ -189,20 +189,20 @@ async function newGame(channel, user, context) {
       } else {
         message = "You are Dillon (captial D)";
       }
-      
+
       if (role === 'dillon' || game.numPlayers <= 6) {
         message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => name(id))}`;
       }
     }
-    
+
     app.client.chat.postMessage({
       token: context.botToken,
       channel: player,
       text: message
     });
   }
-  
-  
+
+
   GAMES[channel] = game;
   console.log(GAMES);
   await printStatus(channel, context);
@@ -213,7 +213,7 @@ async function sendNominationForm(game, context) {
   console.log(game.ineligibleReviewers);
   const eligibleReviewers = game.turnOrder.filter(player => (game.ineligibleReviewers.indexOf(player) === -1) && (player !== game.manager));
   console.log(eligibleReviewers);
-  
+
   app.client.chat.postMessage({
     token: context.botToken,
     channel: game.manager,
@@ -223,14 +223,14 @@ async function sendNominationForm(game, context) {
         text: {
           "type": "mrkdwn",
           "text": "Pick a player to nominate for promotion to reviewer."
-        } 
+        }
       },
       {
         "type": "divider"
       },
       {
         type: "actions",
-        
+
         elements: eligibleReviewers.map((player, index) => {
           return {
             type: "button",
@@ -257,20 +257,20 @@ async function printStatus(channel, context, respond) {
     });
   } else {
     const game = GAMES[channel];
-    
+
     function name(player) {
       return game.players[player].name;
     }
-    
+
     let text = "*Players*: " + game.turnOrder.map(name).join(", ") +
               //"\n*Round*: " + game.round + "\n*Step*: " + game.step +
               "\n*Score*: " + game.accept + " Accepted; " + game.reject + " Rejected" +
-              "\n*Powers Remaining*: " + Object.entries(game.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ") + 
-              "\n*Step*: " + game.step + 
+              "\n*Powers Remaining*: " + Object.entries(game.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ") +
+              "\n*Step*: " + game.step +
               "\n*Cards in Deck:* " + game.deck.length +
               "\n*Promotion Tracker*: " + game.promotionTracker;
-    
-    
+
+
     if (game.step === "nominate") {
       text += "\n*Manager Candidate*: " + name(game.manager);
       text += "\n*Instructions*: Waiting for " + name(game.manager) + " to nominate a code reviewer";
@@ -292,13 +292,13 @@ async function printStatus(channel, context, respond) {
         }
       },
     ];
-    
+
     // TODO: Move this out into a function startNominate which will PM the manager with the list of users to choose from
     if (game.step === "vote") {
       blocks.push({
         "type": "divider"
       });
-      
+
       blocks.push({
         type: "actions",
         elements: [
@@ -350,7 +350,7 @@ async function printStatus(channel, context, respond) {
         blocks: blocks
       });
     }
-    
+
   }
 }
 
@@ -361,33 +361,35 @@ app.message('status', async ({message, context}) => {
 app.action("new_game", async ({body, ack, respond, context}) => {
   ack();
   respond({"delete_original": true});
-  newGame(body.channel.id, body.user.id, context);
+  //newGame(body.channel.id, body.user.id, context);
+  await createLobby(body.channel.id, context);
 });
 
 app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
   ack();
   await respond({"delete_original": true});
-  
+
   const value = body.actions[0].value;
   const [channel, gameId, player] = value.split("_");
   const game = GAMES[channel];
-  
+
   console.log(channel, gameId, player, game);
   console.log(game.gameId === gameId);
-  
+
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
     return;
   }
-  
+
   console.log("waaa");
-  
+
   game.reviewer = player;
   game.step = "vote";
   printStatus(game.channel, context);
 });
 
 app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
+  // TODO ensure that the player is in the game (i.e. spectators could click the buttons)
   ack();
   const game = GAMES[body.channel.id];
   function name(player) {
@@ -399,7 +401,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   } else {
     game.votes[body.user.id] = vote;
   }
-  
+
   // If everyone has voted
   if (Object.keys(game.votes).length === game.turnOrder.length) {
     let numNein = 0;
@@ -408,31 +410,31 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     for (const player in game.votes) {
       votes[game.votes[player]].push(name(player));
     }
-    
+
     // Print voting results
     await app.client.chat.postMessage({
       token: context.botToken,
       channel: body.channel.id,
       text: "*Voting Results*:\n*Ja*: " + votes.ja.join(", ") + "\n*Nein*: " + votes.nein.join(", ")
     });
-    
+
     // Clear votes
     game.votes = {};
-    
+
     // Check results
     if (votes.ja.length > votes.nein.length) { // Majority voted ja
       // Check if the game is over due to Dillon being promoted
       if (checkGameOver(game, context, game.step)) {
         return;
       }
-      
+
       // Set the next ineligible reviewers
       if (game.turnOrder.length <= 5) {
         game.ineligibleReviewers = [game.reviewer];
       } else {
         game.ineligibleReviewers = [game.manager, game.reviewer];
       }
-      
+
       // Move to the legislative step
       game.step = "legislative";
       sendManagerCards(game, context);
@@ -442,11 +444,11 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       if (game.promotionTracker >= 3) {
         const randomResult = game.deck.pop();
         game[randomResult]++;
-        
+
         if (checkGameOver(game, context)) {
           return;
         }
-        
+
         game.promotionTracker = 0;
       }
       sendNominationForm(game, context);
@@ -460,25 +462,26 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
 
 async function actionMiddleware({body, ack, respond, context, next}) {
   ack();
-  await respond({"delete_original": true});
+  //await respond({"delete_original": true});
   const value = body.actions[0].value;
   const [channel, gameId, actionValue] = value.split("_");
   const game = GAMES[channel];
-  
+
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
     return;
   }
-  
+
   context.game = game;
   context.value = actionValue;
-  
+
   next();
 }
 
 app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
+  await respond({"delete_original": true});
   const game = context.game;
-  
+
   // Send a message to the manager asking whether they'd like to veto
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -489,7 +492,7 @@ app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
         text: {
           "type": "mrkdwn",
           "text": `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`
-        } 
+        }
       },
       {
         type: "actions",
@@ -523,44 +526,45 @@ app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
 });
 
 app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
+  await respond({"delete_original": true});
   const game = context.game;
   const choice = context.value;
-  
+
   if (choice === "ja") {
     // If yes, discard the cards
     game.discard.push(game.hand.pop());
     game.discard.push(game.hand.pop());
-    
+
     // Advance election tracker and check if === 3
     game.promotionTracker++;
     if (game.promotionTracker >= 3) {
       const randomResult = game.deck.pop();
       game[randomResult]++;
-      
+
       if (checkGameOver(game, context)) {
-        return; 
+        return;
       }
-      
+
       await startNextRound(game, context);
       return;
     }
-    
-    
+
+
     // Shuffle if needed
     if (game.deck.length < 3) {
       game.deck = game.deck.concat(game.discard);
       shuffleArray(game.deck);
     }
-    
+
     // Send new cards to manager
     await sendManagerCards(game, context);
-    
+
     await app.client.chat.postMessage({
       token: context.botToken,
       channel: game.channel,
       text: `*${game.name(game.reviewer)} and ${game.name(game.manager)} vetoed the PR.*`
     });
-    
+
     await printStatus(game.channel, context);
   } else {
     await sendCards(game, game.reviewer, `${game.name(game.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
@@ -578,12 +582,12 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
   const value = body.actions[0].value;
   const [channel, gameId, index] = value.split("_");
   const game = GAMES[channel];
-  
+
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
     return;
   }
-  
+
   // If there are currently 3 cards, it was the manager's pick
   if (game.hand.length === 3) {
     game.discard.push(game.hand.splice(parseInt(index), 1));
@@ -592,21 +596,21 @@ app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
     // Increment the chosen counter
     const chosen = game.hand.splice(parseInt(index), 1)[0];
     game[chosen]++;
-    
+
     // Put the other card into discard
     game.discard.push(game.hand.pop());
-    
+
     // If the deck has fewer than 3 cards left, shuffle deck and discard together
     if (game.deck.length < 3) {
       game.deck = game.deck.concat(game.discard);
       shuffleArray(game.deck);
     }
-    
+
     // Check if the game is over
     if (checkGameOver(game, context)) {
       return;
     }
-    
+
     // Move to the executive step
     executiveStep(chosen, game, context);
   }
@@ -631,10 +635,10 @@ function startNextRound(game, context) {
 }
 
 async function executiveStep(chosen, game, context) {
-  if (chosen === 'reject') {    
+  if (chosen === 'reject') {
     const power = game.managerialPowers[game.reject];
     delete game.managerialPowers[game.reject];
-    
+
     if (power === "investigate") {
       sendInvestigateForm(game, context);
       return;
@@ -646,10 +650,10 @@ async function executiveStep(chosen, game, context) {
       // Peak doesn't block next round
     } else if (power === "fire") {
       await sendFireForm(game, context);
-      return; 
+      return;
     }
   }
-  
+
   startNextRound(game, context);
 }
 
@@ -665,7 +669,7 @@ async function peak(game, context) {
           "text": `The top 3 cards of the deck are \n-${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}` }  },
     ]
   });
-  
+
   await app.client.chat.postMessage({
     token: context.botToken,
     channel: game.channel,
@@ -675,7 +679,7 @@ async function peak(game, context) {
         text: {
           "type": "mrkdwn",
           "text": `Showing ${game.name(game.manager)} the top three cards of the PR deck.`
-        } 
+        }
       },
     ]
   });
@@ -685,7 +689,7 @@ async function sendInvestigateForm(game, context) {
   const eligiblePlayers = game.turnOrder.filter(player => (game.identified.indexOf(player) === -1) && (player !== game.manager));
   const groupText = `Waiting for ${game.name(game.manager)} to investigate a player.`;
   const privateText = `Pick a player to investigate:`;
-  
+
   await sendForm(game, context, 'investigate', groupText, privateText, eligiblePlayers);
 }
 
@@ -716,11 +720,11 @@ async function sendForm(game, context, type, groupText, privateText, eligiblePla
         text: {
           "type": "mrkdwn",
           "text": groupText
-        } 
+        }
       },
     ]
   });
-  
+
   // Send the manager a form to ask who to investigate
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -731,14 +735,14 @@ async function sendForm(game, context, type, groupText, privateText, eligiblePla
         text: {
           "type": "mrkdwn",
           "text": privateText
-        } 
+        }
       },
       {
         "type": "divider"
       },
       {
         type: "actions",
-        
+
         elements: eligiblePlayers.map((player, index) => {
           return {
             type: "button",
@@ -761,10 +765,10 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
   const value = body.actions[0].value;
   const [channel, target] = value.split("_");
   const game = GAMES[channel];
-  
+
   const target_name = game.name(target);
   const manager_name = game.name(game.manager);
-  
+
   // Send a message to the group to say who the manager investigated
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -775,11 +779,11 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
         text: {
           "type": "mrkdwn",
           "text": `${manager_name} investigated ${target_name}.`
-        } 
+        }
       },
     ]
   });
-  
+
   // Send a message to the manager with the target's affilitaion
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -790,11 +794,11 @@ app.action(/^investigate_.*$/, async ({body, ack, respond, context}) => {
         text: {
           "type": "mrkdwn",
           "text": `${target_name} is a ${game.players[target].role.toLowerCase()}.`
-        } 
+        }
       },
     ]
   });
-  
+
   // Start the next round
   startNextRound(game, context);
 });
@@ -805,10 +809,10 @@ app.action(/^special_.*$/, async ({body, ack, respond, context}) => {
   const value = body.actions[0].value;
   const [channel, target] = value.split("_");
   const game = GAMES[channel];
-  
+
   const target_name = game.name(target);
   const manager_name = game.name(game.manager);
-  
+
   // Send a message to the group to say who the manager investigated
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -819,11 +823,11 @@ app.action(/^special_.*$/, async ({body, ack, respond, context}) => {
         text: {
           "type": "mrkdwn",
           "text": `${manager_name} nominated ${target_name} to go up for special promotion to manager.`
-        } 
+        }
       },
     ]
   });
-  
+
   // Start the next round with the special manager and without rotating the manager index
   game.manager = target;
   game.step = "nominate";
@@ -839,10 +843,10 @@ app.action(/^fire_.*$/, async ({body, ack, respond, context}) => {
   const value = body.actions[0].value;
   const [channel, target] = value.split("_");
   const game = GAMES[channel];
-  
+
   const target_name = game.name(target);
   const manager_name = game.name(game.manager);
-  
+
   // Send a message to the group to say who the manager fired
   await app.client.chat.postMessage({
     token: context.botToken,
@@ -853,11 +857,11 @@ app.action(/^fire_.*$/, async ({body, ack, respond, context}) => {
         text: {
           "type": "mrkdwn",
           "text": `☠️ ${manager_name} fired ${target_name} ☠️`
-        } 
+        }
       },
     ]
   });
-  
+
   game.players[target].state = "fired";
   game.turnOrder.splice(game.turnOrder.indexOf(target), 1);
   if (checkGameOver(game, context)) {
@@ -883,7 +887,7 @@ function checkGameOver(game, context, step) {
     gameOver = true;
     message = `${game.name(game.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
   }
-  
+
   if (gameOver) {
     delete GAMES[game.channel];
     app.client.chat.postMessage({
@@ -892,14 +896,14 @@ function checkGameOver(game, context, step) {
       text: message
     });
   }
-  
+
   return gameOver;
 }
 
 async function sendManagerCards(game, context) {
   // Draw 3 cards into a hand
   game.hand = game.deck.splice(0, 3);
-  
+
   // Send cards to manager
   sendCards(game, game.manager, "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + ".", context);
 }
@@ -918,7 +922,7 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
       "style": card === "reject" ? "danger" : "primary"
     };
   });
-  
+
   // Check if veto power is active, if so, include a "Veto" button for the reviewer
   if (includeVeto && (game.reject >= 0) && (buttons.length === 2)) {
     buttons.push({
@@ -932,7 +936,7 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
       "value": `${game.channel}_${game.gameId}_veto`
     });
   }
-  
+
   app.client.chat.postMessage({
     token: context.botToken,
     channel: player,
@@ -942,7 +946,7 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
         text: {
           "type": "mrkdwn",
           "text": instructions
-        } 
+        }
       },
       {
         type: "actions",
@@ -952,7 +956,113 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
   });
 }
 
+async function postLobby(game, context, respond) {
+  const buttons = {
+    type: "actions",
+    elements: [
+      {
+        type:"button" ,
+        "action_id": "lobby_join",
+        "text": {
+          "type": "plain_text",
+          "text": "Join Game",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_join`,
+      },
+      {
+        type:"button" ,
+        "action_id": "lobby_leave",
+        "text": {
+          "type": "plain_text",
+          "text": "Leave Game",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_leave`,
+      }
+    ]
+  };
+
+  if (Object.keys(game.players).length >= 3) {
+    buttons.elements.append({
+      type:"button" ,
+      "action_id": "start",
+      "text": {
+        "type": "plain_text",
+        "text": "Start Game!",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_start`,
+      "style": "primary"
+    });
+  }
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        "type": "mrkdwn",
+        "text": `Starting a new game of Secret Dillon™.\n*Players*:${Object.keys(game.players).map(player => game.name(game.players[player])).join(", ")\nClick below to join!`
+      }
+    },
+    {
+      "type": "divider"
+    },
+    buttons
+  ];
+
+  if (respond) {
+    await respond({
+      blocks: blocks,
+      "replace_original": true
+    });
+  } else {
+    await app.client.chat.postMessage({
+      token: context.botToken,
+      channel: game.channel,
+      blocks: blocks
+    });
+  }
+}
+
+app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
+  const game = context.game;
+  const user = body.user.id;
+  const choice = context.value;
+
+  if (choice === "join") {
+    const userInfo = await app.client.users.info({
+      token: context.botToken,
+      user: user,
+    });
+
+    game.players[user] = {
+      //role: role, // dillon | Dillon | libby
+      //state: "employed", // employed | fired
+      name: userInfo.user.profile.display_name,
+      realName: userInfo.user.profile.real_name
+    };
+  } else {
+    delete game.players[user];
+  }
+
+  postLobby(game, context, respond);
+});
+
+async function createLobby(channel, context) {
+  games[channel] = {
+    channel: channel,
+    gameId: Math.round(Math.random() * 99999999).toString(),
+    players: {},
+    step: "lobby",
+    name: function(player) {return this.players[player].name;}
+  };
+
+  await postLobby(games[channel], context);
+}
+
 app.message('new', async ({message, context, say}) => {
+  // TODO prompt for a list of
   if (message.channel in GAMES) {
     app.client.chat.postEphemeral({
       token: context.botToken,
@@ -981,10 +1091,10 @@ app.message('new', async ({message, context, say}) => {
     });
     return;
   } else {
-    await newGame(message.channel, message.user, context);
-    
+    //await newGame(message.channel, message.user, context);
+
     // TODO: Remove below test
-    const game = GAMES[message.channel];
+    //const game = GAMES[message.channel];
     // game.step = "legislative";
     //game.manager = "U0766LV3J";
     //game.reviewer = "U0766LV3J";
@@ -993,6 +1103,7 @@ app.message('new', async ({message, context, say}) => {
     // sendSpecialForm(game, context);
     // peak(game, context);
     // sendFireForm(game, context);
+    await createLobby(message.channel, context);
   }
 
 });
@@ -1006,6 +1117,6 @@ app.message('new', async ({message, context, say}) => {
   await app.start(process.env.PORT || 3000);
 
   console.log('⚡️ Bolt app is running!');
-  
+
 
 })();
