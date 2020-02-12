@@ -79,7 +79,7 @@ async function newGame(channel, user, context) {
   
   const game = {
     channel: channel,
-    gameId: Math.round(Math.random() * 99999999),
+    gameId: Math.round(Math.random() * 99999999).toString(),
     players: {},
     numPlayers: turnOrder.length,
     Dillon: "",
@@ -373,10 +373,15 @@ app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
   const [channel, gameId, player] = value.split("_");
   const game = GAMES[channel];
   
+  console.log(channel, gameId, player, game);
+  console.log(game.gameId === gameId);
+  
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
     return;
   }
+  
+  console.log("waaa");
   
   game.reviewer = player;
   game.step = "vote";
