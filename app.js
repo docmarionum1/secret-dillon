@@ -39,53 +39,17 @@ const POWERS = {
   peak: "Peak at the top 3 PR cards"
 };
 
-async function newGame(channel, user, context) {
-  // Get all users in channel
-  let members = [];
-  let cursor = '';
-  while (true) {
-    const response = await app.client.conversations.members({
-      token: context.botToken,
-      channel: channel,
-      cursor: cursor
-    });
-    members = members.concat(response.members);
-    cursor = response.response_metadata.next_cursor;
-    if (cursor === '') break;
-  }
-
-  // Filter out bot user
-  members = members.filter((member) => member !== context.botUserId);
-
-  // Shuffle array and pick up to the first 10
-  shuffleArray(members);
-  const players = members.slice(0, 10);
-
+async function startGame(gameLobby, context) {
   // Get a turn order
-  const turnOrder = players.slice();
+  const turnOrder = Object.keys(gameLobby.players);
   shuffleArray(turnOrder);
 
-  console.log(players);
-
-  if (players.length < 3) {
-    app.client.chat.postEphemeral({
-      token: context.botToken,
-      channel: channel,
-      user: user,
-      text: "Not enough players in the channel. A minimum of 3 is required."
-    });
-    return;
-  }
-
   const game = {
-    channel: channel,
-    gameId: Math.round(Math.random() * 99999999).toString(),
-    players: {},
+    ...gameLobby,
     numPlayers: turnOrder.length,
     Dillon: "",
     dillons: [],
     libbys: [],
-    //round: 0,
     turnOrder: turnOrder,
     managerIndex: 0,
     manager: turnOrder[0],
@@ -99,7 +63,6 @@ async function newGame(channel, user, context) {
     hand: [],
     accept: 0,
     reject: 0,
-    name: function(player) {return this.players[player].name;},
     identified: [],
     managerialPowers: {}
   };
@@ -127,10 +90,6 @@ async function newGame(channel, user, context) {
     };
   }
 
-  function name(player) {
-    return game.players[player].name;
-  }
-
   // Set up deck
   for (let i = 0; i < 6; i++) {
     game.deck.push("accept");
@@ -141,17 +100,7 @@ async function newGame(channel, user, context) {
   shuffleArray(game.deck);
 
   async function addPlayer(player, role) {
-    const userInfo = await app.client.users.info({
-      token: context.botToken,
-      user: player,
-    });
-
-    game.players[player] = {
-      role: role, // dillon | Dillon | libby
-      state: "employed", // employed | fired
-      name: userInfo.user.profile.display_name,
-      realName: userInfo.user.profile.real_name
-    };
+    game.players[player].role = role;
 
     if (role === 'libby') {
       game.libbys.push(player);
@@ -159,6 +108,9 @@ async function newGame(channel, user, context) {
       game.dillons.push(player);
     }
   }
+
+  const players = Object.keys(game.players);
+  shuffleArray(players);
 
   const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
 
@@ -172,6 +124,7 @@ async function newGame(channel, user, context) {
     await addPlayer(players.pop(), "dillon");
   }
 
+  // Make the rest libbys
   while(player = players.pop()) {
     await addPlayer(player, "libby");
   }
@@ -185,13 +138,13 @@ async function newGame(channel, user, context) {
     } else {
       if (role === 'dillon') {
         message = "You are a dillon (lowercase d)";
-        message += `\nDillon is ${name(game.Dillon)}`;
+        message += `\nDillon is ${game.name(game.Dillon)}`;
       } else {
         message = "You are Dillon (captial D)";
       }
 
       if (role === 'dillon' || game.numPlayers <= 6) {
-        message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => name(id))}`;
+        message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => game.name(id))}`;
       }
     }
 
@@ -203,9 +156,9 @@ async function newGame(channel, user, context) {
   }
 
 
-  GAMES[channel] = game;
+  GAMES[game.channel] = game;
   console.log(GAMES);
-  await printStatus(channel, context);
+  await printStatus(game.channel, context);
   await sendNominationForm(game, context);
 }
 
@@ -279,6 +232,7 @@ async function printStatus(channel, context, respond) {
       text += "\n*Reviewer Candidate*: " + name(game.reviewer);
       text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
       text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
+      text += "\n*Players that haven't voted*:" + Object.keys(game.players).filter(player => !(player in game.votes)).map(player => game.name(player)).join(", ");
     } else if (game.step === "legislative") {
       text += `\n*Instructions*: Waiting for for ${game.name(game.manager)} and ${game.name(game.reviewer)} to review the PR`;
     }
@@ -381,20 +335,20 @@ app.action(/^nominate_\d+$/, async({body, ack, respond, context}) => {
     return;
   }
 
-  console.log("waaa");
-
   game.reviewer = player;
   game.step = "vote";
   printStatus(game.channel, context);
 });
 
 app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
-  // TODO ensure that the player is in the game (i.e. spectators could click the buttons)
   ack();
   const game = GAMES[body.channel.id];
-  function name(player) {
-    return game.players[player].name;
+
+  // Make sure user is in game
+  if (!(body.user.id in game.players)) {
+    return;
   }
+
   const vote = body.actions[0].value;
   if (vote === "withdraw") {
     delete game.votes[body.user.id];
@@ -408,7 +362,7 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
     let numJa = 0;
     const votes = {ja: [], nein: []};
     for (const player in game.votes) {
-      votes[game.votes[player]].push(name(player));
+      votes[game.votes[player]].push(game.name(player));
     }
 
     // Print voting results
@@ -924,7 +878,7 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
   });
 
   // Check if veto power is active, if so, include a "Veto" button for the reviewer
-  if (includeVeto && (game.reject >= 0) && (buttons.length === 2)) {
+  if (includeVeto && (game.reject >= 5) && (buttons.length === 2)) {
     buttons.push({
       type:"button" ,
       "action_id": "veto",
@@ -984,7 +938,7 @@ async function postLobby(game, context, respond) {
   };
 
   if (Object.keys(game.players).length >= 3) {
-    buttons.elements.append({
+    buttons.elements.push({
       type:"button" ,
       "action_id": "start",
       "text": {
@@ -1002,7 +956,7 @@ async function postLobby(game, context, respond) {
       type: "section",
       text: {
         "type": "mrkdwn",
-        "text": `Starting a new game of Secret Dillon™.\n*Players*:${Object.keys(game.players).map(player => game.name(game.players[player])).join(", ")\nClick below to join!`
+        "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(game.players).map(player => game.name(player)).join(", ")}\nClick below to join!`
       }
     },
     {
@@ -1038,7 +992,7 @@ app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context})
 
     game.players[user] = {
       //role: role, // dillon | Dillon | libby
-      //state: "employed", // employed | fired
+      state: "employed", // employed | fired
       name: userInfo.user.profile.display_name,
       realName: userInfo.user.profile.real_name
     };
@@ -1049,8 +1003,15 @@ app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context})
   postLobby(game, context, respond);
 });
 
+app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
+  const game = context.game;
+  respond({"delete_original": true});
+  startGame(game, context);
+})
+
+
 async function createLobby(channel, context) {
-  games[channel] = {
+  GAMES[channel] = {
     channel: channel,
     gameId: Math.round(Math.random() * 99999999).toString(),
     players: {},
@@ -1058,7 +1019,7 @@ async function createLobby(channel, context) {
     name: function(player) {return this.players[player].name;}
   };
 
-  await postLobby(games[channel], context);
+  await postLobby(GAMES[channel], context);
 }
 
 app.message('new', async ({message, context, say}) => {
