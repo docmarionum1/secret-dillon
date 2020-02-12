@@ -140,7 +140,7 @@ async function startGame(gameLobby, context) {
         message = "You are a dillon (lowercase d)";
         message += `\nDillon is ${game.name(game.Dillon)}`;
       } else {
-        message = "You are Dillon (captial D)";
+        message = "You are Dillon (capital D)";
       }
 
       if (role === 'dillon' || game.numPlayers <= 6) {
