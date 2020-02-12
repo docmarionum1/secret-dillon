@@ -449,18 +449,83 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   }
 });
 
-async function actionMiddleware({body, ack, respond, context}) {
+async function actionMiddleware({body, ack, respond, context, next}) {
   ack();
   await respond({"delete_original": true});
   const value = body.actions[0].value;
-  const [channel, gameId, index] = value.split("_");
+  const [channel, gameId, actionValue] = value.split("_");
   const game = GAMES[channel];
   
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
     return;
   }
+  
+  context.game = game;
+  context.value = actionValue;
+  
+  next();
 }
+
+app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
+  const game = context.game;
+  
+  // Send a message to the manager asking whether they'd like to veto
+  await app.client.chat.postMessage({
+    token: context.botToken,
+    channel: game.manager,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`
+        } 
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type:"button" ,
+            "action_id": "veto_ja",
+            "text": {
+              "type": "plain_text",
+              "text": "Ja!",
+              "emoji": true
+            },
+            "value": `${game.channel}_${game.gameId}_ja`,
+            "style": "primary"
+          },
+          {
+            type:"button" ,
+            "action_id": "veto_nein",
+            "text": {
+              "type": "plain_text",
+              "text": "Nein!",
+              "emoji": true
+            },
+            "value": `${game.channel}_${game.gameId}_nein`,
+            "style": "danger"
+          }
+        ]
+      }
+    ]
+  });
+});
+
+app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
+  const game = context.game;
+  const choice = context.value;
+  
+  if (choice === "ja") {
+    
+  } else {
+    await sendCards(game, game.reviewer, `${game.name(game.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
+    app.client.chat.postMessage({
+      token: context.botToken,
+      channel: game.manager,
+  }
+});
 
 app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
   ack();
@@ -794,7 +859,7 @@ async function sendManagerCards(game, context) {
   sendCards(game, game.manager, "Choose a card to *discard*. The other two will be passed to " + game.players[game.reviewer].name + ".", context);
 }
 
-async function sendCards(game, player, instructions, context) {
+async function sendCards(game, player, instructions, context, includeVeto=true) {
   const buttons = game.hand.map((card, index) => {
     return {
       type:"button" ,
@@ -810,7 +875,7 @@ async function sendCards(game, player, instructions, context) {
   });
   
   // Check if veto power is active, if so, include a "Veto" button for the reviewer
-  if ((game.reject >= 5) && (buttons.length === 2)) {
+  if (includeVeto && (game.reject >= 5) && (buttons.length === 2)) {
     buttons.push({
       type:"button" ,
       "action_id": "veto",
