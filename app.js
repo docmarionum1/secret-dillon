@@ -438,6 +438,11 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
       if (game.promotionTracker >= 3) {
         const randomResult = game.deck.pop();
         game[randomResult]++;
+        
+        if (checkGameOver(game, context)) {
+          return;
+        }
+        
         game.promotionTracker = 0;
       }
       sendNominationForm(game, context);
@@ -518,12 +523,40 @@ app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) 
   const choice = context.value;
   
   if (choice === "ja") {
+    // If yes, discard the cards
+    game.discard.push(game.hand.pop());
+    game.discard.push(game.hand.pop());
     
+    // Advance election tracker and check if === 3
+    game.promotionTracker++;
+    if (game.promotionTracker >= 3) {
+      const randomResult = game.deck.pop();
+      game[randomResult]++;
+      
+      if (checkGameOver(game, context)) {
+        return; 
+      }
+      
+      await startNextRound(game, context);
+      return;
+    }
+    
+    
+    // Shuffle if needed
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+    
+    // Send new cards to manager
+    sendManagerCards(game, context);
   } else {
     await sendCards(game, game.reviewer, `${game.name(game.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
-    app.client.chat.postMessage({
+    await app.client.chat.postMessage({
       token: context.botToken,
-      channel: game.manager,
+      channel: game.channel,
+      text: `${game.name(game.reviewer)} suggested a veto but ${game.name(game.manager)} *rejected* it. Waiting for ${game.name(game.reviewer)} to play a card.`
+    });
   }
 });
 
@@ -875,7 +908,7 @@ async function sendCards(game, player, instructions, context, includeVeto=true) 
   });
   
   // Check if veto power is active, if so, include a "Veto" button for the reviewer
-  if (includeVeto && (game.reject >= 5) && (buttons.length === 2)) {
+  if (includeVeto && (game.reject >= 0) && (buttons.length === 2)) {
     buttons.push({
       type:"button" ,
       "action_id": "veto",
