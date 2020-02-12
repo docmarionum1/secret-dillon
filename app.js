@@ -449,12 +449,30 @@ app.action(/^vote_.*$/, async({body, ack, respond, context}) => {
   }
 });
 
+async function actionMiddleware({body, ack, respond, context}) {
+  ack();
+  await respond({"delete_original": true});
+  const value = body.actions[0].value;
+  const [channel, gameId, index] = value.split("_");
+  const game = GAMES[channel];
+  
+  // Make sure the game exists and its for the right game
+  if (!game || game.gameId !== gameId) {
+    return;
+  }
+}
+
 app.action(/^selectCard_\d$/, async ({body, ack, respond, context}) => {
   ack();
   await respond({"delete_original": true});
   const value = body.actions[0].value;
-  const [channel, index] = value.split("_");
+  const [channel, gameId, index] = value.split("_");
   const game = GAMES[channel];
+  
+  // Make sure the game exists and its for the right game
+  if (!game || game.gameId !== gameId) {
+    return;
+  }
   
   // If there are currently 3 cards, it was the manager's pick
   if (game.hand.length === 3) {
@@ -503,8 +521,6 @@ function startNextRound(game, context) {
 }
 
 async function executiveStep(chosen, game, context) {
-  console.log(chosen);
-  
   if (chosen === 'reject') {    
     const power = game.managerialPowers[game.reject];
     delete game.managerialPowers[game.reject];
@@ -519,7 +535,7 @@ async function executiveStep(chosen, game, context) {
       await peak(game, context);
       // Peak doesn't block next round
     } else if (power === "fire") {
-      // Fire
+      await sendFireForm(game, context);
       return; 
     }
   }
@@ -779,6 +795,34 @@ async function sendManagerCards(game, context) {
 }
 
 async function sendCards(game, player, instructions, context) {
+  const buttons = game.hand.map((card, index) => {
+    return {
+      type:"button" ,
+      "action_id": "selectCard_" + index,
+      "text": {
+        "type": "plain_text",
+        "text": card === "reject" ? "Reject PR" : "Accept PR",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_${index}`,
+      "style": card === "reject" ? "danger" : "primary"
+    };
+  });
+  
+  // Check if veto power is active, if so, include a "Veto" button for the reviewer
+  if ((game.reject >= 5) && (buttons.length === 2)) {
+    buttons.push({
+      type:"button" ,
+      "action_id": "veto",
+      "text": {
+        "type": "plain_text",
+        "text": "Veto",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_veto`
+    });
+  }
+  
   app.client.chat.postMessage({
     token: context.botToken,
     channel: player,
@@ -792,19 +836,7 @@ async function sendCards(game, player, instructions, context) {
       },
       {
         type: "actions",
-        elements: game.hand.map((card, index) => {
-          return {
-            type:"button" ,
-            "action_id": "selectCard_" + index,
-            "text": {
-              "type": "plain_text",
-              "text": card === "reject" ? "Reject PR" : "Accept PR",
-              "emoji": true
-            },
-            "value": `${game.channel}_${index}`,
-            "style": card === "reject" ? "danger" : "primary"
-          };
-        })
+        elements: buttons
       }
     ]
   });
