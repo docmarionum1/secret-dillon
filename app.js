@@ -1,12 +1,38 @@
 // Require the Bolt package (github.com/slackapi/bolt)
 const { App } = require("@slack/bolt");
+const { Datastore } = require('@google-cloud/datastore');
 
+// Creates a datastore client
+const datastore = new Datastore();
+const datastoreKey = datastore.key(["secret-dillon", "games"]);
+
+// Create the bolt app
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
 const GAMES = {};
+
+async function saveGames() {
+  await datastore.upsert({
+    key: datastoreKey,
+    data: JSON.parse(JSON.stringify(GAMES))
+  });
+}
+
+async function loadGames() {
+  // Check if games already exists and if so, load it.
+  const [games] = await datastore.get(datastoreKey);
+
+  for (const game in games) {
+    GAMES[game] = Object.assign(new Game(), games[game]);
+    GAMES[game].players = Object.keys(games[game].players).reduce((obj, player) => {
+      obj[player] = Object.assign(new Player(), games[game].players[player]);
+      return obj
+    }, {});
+  }
+}
 
 /**
  * Randomize array element order in-place.
@@ -62,9 +88,11 @@ const POWERS = {
 
 class Player {
   constructor(userInfo) {
-    this.state = "employed";
-    this.name = userInfo.user.profile.display_name;
-    this.realName = userInfo.user.profile.real_name
+    if (userInfo) {
+      this.state = "employed";
+      this.name = userInfo.user.profile.display_name;
+      this.realName = userInfo.user.profile.real_name;
+    }
   }
 }
 
@@ -754,16 +782,19 @@ app.action("new_game", async ({body, ack, respond, context}) => {
   ack();
   respond({"delete_original": true});
   await createLobby(body.channel.id, context);
+  await saveGames();
 });
 
 app.action(/^nominate_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   context.game.nominate(context.value, context);
+  await saveGames();
 });
 
 app.action(/^vote_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
   await context.game.vote(body.user.id, context.value, context, respond);
   checkGameOver(context.game);
+  await saveGames();
 });
 
 app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
@@ -811,34 +842,40 @@ app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
       }
     ]
   });
+  await saveGames();
 });
 
 app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   await context.game.vetoResponse(context.value, context);
   checkGameOver(context.game);
+  await saveGames();
 });
 
 app.action(/^selectCard_\d$/, actionMiddleware, async ({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   await context.game.selectCard(context.value, context);
   checkGameOver(context.game);
+  await saveGames();
 });
 
 app.action(/^investigate_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   await context.game.investigate(context.value, context);
+  await saveGames();
 });
 
 app.action(/^special_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   await context.game.specialPromotion(context.value, context);
+  await saveGames();
 });
 
 app.action(/^fire_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
   await respond({"delete_original": true});
   await context.game.fire(context.value, context);
   checkGameOver(context.game);
+  await saveGames();
 });
 
 function checkGameOver(game) {
@@ -935,6 +972,7 @@ app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context})
   }
 
   postLobby(game, context, respond);
+  await saveGames();
 });
 
 app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
@@ -942,6 +980,7 @@ app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
   await game.unpinPinnedMessage(context);
   await respond({"delete_original": true});
   game.start(context);
+  await saveGames();
 });
 
 async function clearPins(channel, context) {
@@ -1025,9 +1064,13 @@ app.message(/^new$/, async ({message, context, say}) => {
     // sendFireForm(game, context);
     await createLobby(message.channel, context);
   }
+  await saveGames();
 });
 
 (async () => {
+  // Load existing games
+  await loadGames();
+
   // Start your app
   await app.start(process.env.PORT || 3000);
 
