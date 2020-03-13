@@ -1,18 +1,21 @@
-// Require the Bolt package (github.com/slackapi/bolt)
-const { App } = require("@slack/bolt");
+import { App, Middleware, RespondFn, BlockAction, ButtonAction, SlackAction, SlackActionMiddlewareArgs } from "@slack/bolt";
+import {ChatPostMessageArguments, WebClient, WebAPICallResult, ActionsBlock, KnownBlock} from '@slack/web-api';
+import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep } from "./secret-dillon";
+
+
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
-const GAMES = {};
+const GAMES: {[channelId: string]: Game} = {};
 
 /**
  * Randomize array element order in-place.
  * Using Durstenfeld shuffle algorithm.
  */
-function shuffleArray(array) {
+function shuffleArray(array: any[]) {
     for (var i = array.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1));
         var temp = array[i];
@@ -21,7 +24,9 @@ function shuffleArray(array) {
     }
 }
 
-async function actionMiddleware({body, ack, respond, context, next}) {
+const actionMiddleware: ActionHandler = async function({
+  body, ack, respond, context, next
+}) {
   ack();
   const value = body.actions[0].value;
   const [channel, gameId, actionValue] = value.split("_");
@@ -29,7 +34,10 @@ async function actionMiddleware({body, ack, respond, context, next}) {
 
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
-    respond({"delete_original": true});
+    respond({
+      "delete_original": true,
+      text: "rm"
+    });
     return;
   }
 
@@ -38,11 +46,9 @@ async function actionMiddleware({body, ack, respond, context, next}) {
   context.value = actionValue;
 
   next();
-}
+};
 
-
-
-const NUM_LIBBYS = {
+const NUM_LIBBYS: {[numPlayers: number]: number} = {
   3: 1,
   4: 2,
   5: 3,
@@ -61,7 +67,12 @@ const POWERS = {
 };
 
 class Player {
-  constructor(userInfo) {
+  state: "employed" | "fired";
+  name: string;
+  realName: string;
+  role?: string;
+
+  constructor(userInfo: UserInfoResult) {
     this.state = "employed";
     this.name = userInfo.user.profile.display_name;
     this.realName = userInfo.user.profile.real_name
@@ -69,23 +80,184 @@ class Player {
 }
 
 class Game {
-  constructor(channel, botToken) {
+  channel: string;
+  gameId: string;
+  players: {[playerId: string]: Player};
+  pinnedMessage?: string;
+  botToken: string;
+  
+  constructor(channel: string, botToken: string, gameId?: string, players?: {[playerId: string]: Player}) {
     this.channel = channel;
-    this.gameId = Math.round(Math.random() * 99999999).toString();
-    this.players = {};
-    this.step = "lobby";
-    this.pinnedMessage = undefined;
     this.botToken = botToken;
+
+    if (gameId && players) {
+      this.gameId = gameId;
+      this.players = players;
+    } else {
+      this.gameId = Math.round(Math.random() * 99999999).toString();
+      this.players = {};
+    }
   }
 
-  async createLobby(context) {
-    const response = await postLobby(this, context);
-    this.pinnedMessage = response.ts;
-    await pinMessage(this.channel, this.pinnedMessage, context);
+  async clearPins() {
+    // Remove old pinned messages
+    const response = await app.client.pins.list({
+      token: this.botToken,
+      channel: this.channel,
+    }) as PinsListResult;
+  
+    response.items.map(async (item) => await this.unpinMessage(item.message.ts));
+  }
+  
+  async pinMessage(ts: string) {
+    await app.client.pins.add({
+      token: this.botToken,
+      channel: this.channel,
+      timestamp: ts
+    });
+  }
+  
+  async unpinMessage(ts: string) {
+    await app.client.pins.remove({
+      token: this.botToken,
+      channel: this.channel,
+      timestamp: ts
+    });
   }
 
-  async start(context) {
-    // Get a turn order
+  async unpinPinnedMessage() {
+    if (this.pinnedMessage) {
+      await this.unpinMessage(this.pinnedMessage);
+    }
+    this.pinnedMessage = undefined;
+  }
+
+  addPlayer(user: string, userInfo: UserInfoResult) {
+    this.players[user] = new Player(userInfo);
+  }
+
+  removePlayer(user: string) {
+    delete this.players[user];
+  }
+
+  name(player: string) {
+    return this.players[player].name;
+  }
+}
+
+class LobbyGame extends Game {
+  step: "lobby";
+
+  constructor(channel: string, botToken: string) {
+    super(channel, botToken);
+    this.step = "lobby";
+  }
+
+  async createLobby() {
+    const response = await this.postLobby();
+    if (response) {
+      this.pinnedMessage = response.ts;
+      await this.pinMessage(this.pinnedMessage);
+    }
+  }
+
+  async postLobby (respond?: RespondFn): Promise<ChatPostMessageResult | void> {
+    const buttons: ActionsBlock = {
+      type: "actions",
+      elements: [
+        {
+          type:"button" ,
+          "action_id": "lobby_join",
+          "text": {
+            "type": "plain_text",
+            "text": "Join Game",
+            "emoji": true
+          },
+          "value": `${this.channel}_${this.gameId}_join`,
+        },
+        {
+          type:"button" ,
+          "action_id": "lobby_leave",
+          "text": {
+            "type": "plain_text",
+            "text": "Leave Game",
+            "emoji": true
+          },
+          "value": `${this.channel}_${this.gameId}_leave`,
+        }
+      ]
+    };
+  
+    if (Object.keys(this.players).length >= 5) {
+      buttons.elements.push({
+        type:"button" ,
+        "action_id": "start",
+        "text": {
+          "type": "plain_text",
+          "text": "Start Game!",
+          "emoji": true
+        },
+        "value": `${this.channel}_${this.gameId}_start`,
+        "style": "primary"
+      });
+    }
+  
+    const blocks: KnownBlock[] = [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(this.players).map(player => this.name(player)).join(", ")}\nClick below to join!`
+        }
+      },
+      {
+        "type": "divider"
+      },
+      buttons
+    ];
+  
+    if (respond) {
+      return respond({
+        blocks: blocks,
+        "replace_original": true,
+        text: ""
+      });
+    } else {
+      return await app.client.chat.postMessage({
+        token: this.botToken,
+        channel: this.channel,
+        blocks: blocks,
+        text: ""
+      }) as ChatPostMessageResult;
+    }
+  }
+}
+
+class InProgressGame extends Game {
+  step: GameStep;
+  turnOrder: string[];
+  numPlayers: number;
+  managerIndex: number;
+  manager: string;
+  reviewer?: string;
+  ineligibleReviewers: string[];
+  votes: {[player: string]: "ja" | "nein"};
+  promotionTracker: 0 | 1 | 2 | 3;
+  deck: Card[];
+  discard: Card[];
+  hand: Card[];
+  accept: 0 | 1 | 2 | 3 | 4 | 5;
+  reject: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  identified: string[];
+  statusMessage?: string;
+  managerialPowers: {[rejectCount: number]: "peak" | "investigate" | "special" | "fire"};
+  Dillon: string;
+  dillons: string[];
+  libbys: string[];
+
+  constructor({channel, gameId, players, botToken}: LobbyGame) {
+    super(channel, botToken, gameId, players);
+    
     this.turnOrder = Object.keys(this.players);
     shuffleArray(this.turnOrder);
     this.numPlayers = this.turnOrder.length;
@@ -131,32 +303,44 @@ class Game {
     shuffleArray(this.deck);
 
     // Set roles for each player
-    const players = Object.keys(this.players);
-    shuffleArray(players);
-    const numDillons = players.length - NUM_LIBBYS[players.length] - 1;
+    const playerIds = Object.keys(this.players);
+    shuffleArray(playerIds);
+    const numDillons = playerIds.length - NUM_LIBBYS[playerIds.length] - 1;
 
     // Create the Dillon (captial D)
-    let player = players.pop();
+    let player = playerIds.pop() as string;
     this.Dillon = player;
     this.players[player].role = "Dillon";
 
     // Create the dillons (lowercase d)
     this.dillons = [];
     for (let i = 0; i < numDillons; i++) {
-      let player = players.pop();
+      let player = playerIds.pop() as string;
       this.dillons.push(player);
       this.players[player].role = "dillon";
     }
 
     // Make the rest libbys
     this.libbys = [];
-    while(player = players.pop()) {
+    while(player = playerIds.pop() as string) {
       this.libbys.push(player);
       this.players[player].role = "libby";
     }
 
+    this.step = "nominate";
+    this.ineligibleReviewers = [];
+    this.votes = {};
+    this.promotionTracker = 0;
+    this.discard = [];
+    this.hand = [];
+    this.accept = 0;
+    this.reject = 0;
+    this.identified = [];
+  }
+
+  async sendStartMessages() {
     // Send a message to each player with their identity
-    for (player in this.players) {
+    for (const player in this.players) {
       const role = this.players[player].role;
       let message = "";
       if (role === 'libby') {
@@ -174,39 +358,26 @@ class Game {
         }
       }
 
-      app.client.chat.postMessage({
-        token: context.botToken,
+      await app.client.chat.postMessage({
+        token: this.botToken,
         channel: player,
         text: message
       });
     }
 
-    // Set up the rest of the variables
-    this.step = "nominate"; // nominate | vote | legislative | managerial,
-    this.ineligibleReviewers = [];
-    this.reviewer = null;
-    this.votes = {};
-    this.promotionTracker = 0;
-    this.discard = [];
-    this.hand = [];
-    this.accept = 0;
-    this.reject = 0;
-    this.identified = [];
-    this.statusMessage = undefined;
-
     //await this.status(context);
-    await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:", context);
-    await this.sendNominationForm(context);
+    await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:");
+    await this.sendNominationForm();
   }
 
-  async status(context) {
+  async status() {
     let text = "*State*: ";
     if (this.step === "nominate") {
       text += `Waiting for ${this.name(this.manager)} to nominate a code reviewer`;
     } else if (this.step === "vote") {
-      text += `Voting on ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer)} (Reviewer)`;
-    } else if (this.step === "legislative") {
-      text += `Waiting for ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer)} (Reviewer) to review the PR`;
+      text += `Voting on ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer!)} (Reviewer)`;
+    } else if (this.step === "review") {
+      text += `Waiting for ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer!)} (Reviewer) to review the PR`;
     } else if (this.step === "managerial") {
       text += `Waiting for ${this.name(this.manager)} to use the managerial power.`;
     }
@@ -230,52 +401,50 @@ class Game {
     // If a status message exists, update it
     if (this.statusMessage) {
       return await app.client.chat.update({
-        token: context.botToken,
+        token: this.botToken,
         channel: this.channel,
         ts: this.statusMessage,
-        blocks: blocks
+        blocks: blocks,
+        text: "game status"
       });
     } else { // otherwise post a new one and pin it
       const response = await app.client.chat.postMessage({
-        token: context.botToken,
+        token: this.botToken,
         channel: this.channel,
-        blocks: blocks
-      });
+        blocks: blocks,
+        text: "game status"
+      }) as ChatPostMessageResult;
       this.statusMessage = response.ts;
-      await pinMessage(this.channel, this.statusMessage, context);
+      await this.pinMessage(this.statusMessage);
       return response;
     }
   }
 
-  async printMessage(message, context, channel) {
-    const payload = {
-      token: context.botToken,
-      channel: this.channel
+  async printMessage(message: string | KnownBlock[]) {
+    const payload: ChatPostMessageArguments = {
+      token: this.botToken,
+      channel: this.channel,
+      blocks: Array.isArray(message) ? message : undefined,
+      text: Array.isArray(message) ? "" : message
     };
 
-    if (Array.isArray(message)) {
-      payload.blocks = message;
-    } else {
-      payload.text = message;
-    }
-
     await app.client.chat.postMessage(payload);
-    await this.status(context);
+    await this.status();
   }
 
-  async nominate(player, context) {
+  async nominate(player: string) {
     this.reviewer = player;
     this.step = "vote";
-    await this.printMessage(`${this.name(this.manager)} nominated ${this.name(this.reviewer)}.`, context);
-    await this.showBallot(context);
+    await this.printMessage(`${this.name(this.manager)} nominated ${this.name(this.reviewer)}.`);
+    await this.showBallot();
   }
 
-  async showBallot(context) {
-    const blocks = [];
+  async showBallot() {
+    const blocks: KnownBlock[] = [];
 
     let text = "";
     text += "\n*Manager Candidate*: " + this.name(this.manager);
-    text += "\n*Reviewer Candidate*: " + this.name(this.reviewer);
+    text += "\n*Reviewer Candidate*: " + this.name(this.reviewer!);
     text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
     text += "\n*Votes*: " + Object.keys(this.votes).length + "/" + this.turnOrder.length;
     text += "\n*Players that haven't voted*:" + Object.keys(this.players).filter(player => !(player in this.votes)).map(player => this.name(player)).join(", ");
@@ -332,39 +501,29 @@ class Game {
 
     if (this.pinnedMessage) {
       await app.client.chat.update({
-        token: context.botToken,
+        token: this.botToken,
         channel: this.channel,
         blocks: blocks,
-        ts: this.pinnedMessage
+        ts: this.pinnedMessage,
+        text: "ballot"
       });
     } else {
       const response = await app.client.chat.postMessage({
-        token: context.botToken,
+        token: this.botToken,
         channel: this.channel,
-        blocks: blocks
-      });
+        blocks: blocks,
+        text: "ballot"
+      }) as ChatPostMessageResult;
       this.pinnedMessage = response.ts;
-      await pinMessage(this.channel, this.pinnedMessage, context);
+      await this.pinMessage(this.pinnedMessage);
     }
-  }
-
-  addPlayer(user, userInfo) {
-    this.players[user] = new Player(userInfo);
-  }
-
-  removePlayer(user) {
-    delete this.players[user];
-  }
-
-  name(player) {
-    return this.players[player].name;
   }
 
   rotateManager() {
     this.managerIndex = (this.managerIndex + 1) % this.turnOrder.length;
     this.manager = this.turnOrder[this.managerIndex];
     this.step = "nominate";
-    this.reviewer = null;
+    this.reviewer = undefined;
   }
 
   nextRound() {
@@ -372,20 +531,21 @@ class Game {
     this.promotionTracker = 0;
   }
 
-  async startNextRound(context) {
-    console.log(this);
-    console.log("startNextRound");
+  async startNextRound() {
     this.nextRound();
-    await this.sendNominationForm(context);
-    await this.status(context);
+    await this.sendNominationForm();
+    await this.status();
   }
 
-  async sendForm(type, groupText, privateText, eligiblePlayers, context) {
-    await this.printMessage(groupText, context);
+  async sendForm(
+    type: "nominate" | "investigate" | "special" | "fire", 
+    groupText: string, privateText: string, eligiblePlayers: string[]
+  ) {
+    await this.printMessage(groupText);
 
     // Send the manager a form
     await app.client.chat.postMessage({
-      token: context.botToken,
+      token: this.botToken,
       channel: this.manager,
       blocks: [
         {
@@ -413,43 +573,44 @@ class Game {
             };
           })
         }
-      ]
+      ],
+      text: "dm form"
     });
   }
 
-  async sendNominationForm(context) {
+  async sendNominationForm() {
     const eligiblePlayers = this.turnOrder.filter(player => (this.ineligibleReviewers.indexOf(player) === -1) && (player !== this.manager));
     const groupText = `Waiting for ${this.name(this.manager)} to nominate a player for reviewer.`;
     const privateText = "Pick a player to nominate for promotion to reviewer.";
 
-    await this.sendForm('nominate', groupText, privateText, eligiblePlayers, context);
+    await this.sendForm('nominate', groupText, privateText, eligiblePlayers);
   }
 
-  async sendInvestigateForm(context) {
+  async sendInvestigateForm() {
     const eligiblePlayers = this.turnOrder.filter(player => (this.identified.indexOf(player) === -1) && (player !== this.manager));
     const groupText = `Waiting for ${this.name(this.manager)} to investigate a player.`;
     const privateText = `Pick a player to investigate:`;
 
-    await this.sendForm('investigate', groupText, privateText, eligiblePlayers, context);
+    await this.sendForm('investigate', groupText, privateText, eligiblePlayers);
   }
 
-  async sendSpecialForm(context) {
+  async sendSpecialForm() {
     const eligiblePlayers = this.turnOrder.filter(player => player !== this.manager);
     const groupText = `Waiting for ${this.name(this.manager)} to nominate a player for a special promotion to manager.`;
     const privateText = `Pick a player to nominate for special promotion to manager:`;
 
-    await this.sendForm('special', groupText, privateText, eligiblePlayers, context);
+    await this.sendForm('special', groupText, privateText, eligiblePlayers);
   }
 
-  async sendFireForm(context) {
+  async sendFireForm() {
     const eligiblePlayers = this.turnOrder.filter(player => player !== this.manager);
     const groupText = `Waiting for ${this.name(this.manager)} to fire a player.`;
     const privateText = `Pick a player to fire:`;
 
-    await this.sendForm('fire', groupText, privateText, eligiblePlayers, context);
+    await this.sendForm('fire', groupText, privateText, eligiblePlayers);
   }
 
-  async vote(user, vote, context, respond) {
+  async vote(user: string, vote: "ja" | "nein" | "withdraw", respond: RespondFn) {
     // Make sure user is in game
     if (!(user in this.players)) {
       return;
@@ -463,73 +624,71 @@ class Game {
 
     // If everyone has voted
     if (Object.keys(this.votes).length === this.turnOrder.length) {
-      await this.unpinPinnedMessage(this, context);
-      await respond({"delete_original": true});
-      await this.tallyVotes(context);
+      await this.unpinPinnedMessage();
+      respond({"delete_original": true, text: "rm ballot"});
+      await this.tallyVotes();
     } else {
-      await this.showBallot(context);
+      await this.showBallot();
     }
-    await this.status(context);
+    await this.status();
   }
 
-  async tallyVotes(context) {
-    let numNein = 0;
-    let numJa = 0;
-    const votes = {ja: [], nein: []};
+  async tallyVotes() {
+    const votes: {ja: string[], nein: string[]} = {ja: [], nein: []};
     for (const player in this.votes) {
       votes[this.votes[player]].push(this.name(player));
     }
 
     // Print voting results
-    await this.printMessage(`*Voting Results*:\n*Ja*: ${votes.ja.join(", ")}\n*Nein*: ${votes.nein.join(", ")}`, context);
+    await this.printMessage(`*Voting Results*:\n*Ja*: ${votes.ja.join(", ")}\n*Nein*: ${votes.nein.join(", ")}`);
 
     // Clear votes
     this.votes = {};
 
     // Check results
     if (votes.ja.length > votes.nein.length) { // Majority voted ja
-      await this.voteSuccess(context);
+      await this.voteSuccess();
     } else {
-      await this.voteFailure(context);
+      await this.voteFailure();
     }
   }
 
-  async voteSuccess(context) {
+  async voteSuccess() {
     // Check if the game is over due to Dillon being promoted
-    if (this.checkGameOver(context, this.step)) {
+    if (this.checkGameOver(this.step)) {
       return;
     }
 
     // Set the next ineligible reviewers
     if (this.turnOrder.length <= 5) {
-      this.ineligibleReviewers = [this.reviewer];
+      this.ineligibleReviewers = [this.reviewer!];
     } else {
-      this.ineligibleReviewers = [this.manager, this.reviewer];
+      this.ineligibleReviewers = [this.manager, this.reviewer!];
     }
 
     // Move to the legislative step
-    this.step = "legislative";
-    await this.sendManagerCards(context);
+    this.step = "review";
+    await this.sendManagerCards();
   }
 
-  async voteFailure(context) {
-    const finishedTurn = await this.incrementPromotionTracker(context);
+  async voteFailure() {
+    const finishedTurn = await this.incrementPromotionTracker();
     if (!finishedTurn) {
       this.rotateManager();
-      await this.sendNominationForm(context);
+      await this.sendNominationForm();
     }
   }
 
-  async incrementPromotionTracker(context) {
+  async incrementPromotionTracker() {
     // Advance election tracker and check if === 3
     this.promotionTracker++;
     if (this.promotionTracker >= 3) {
-      const randomResult = this.deck.pop();
+      const randomResult = this.deck.pop() as Card;
       this[randomResult]++;
 
       // Check if over because of the result
-      if (!this.checkGameOver(context)) {
-        await this.startNextRound(context);
+      if (!this.checkGameOver()) {
+        await this.startNextRound();
       }
 
       return true;
@@ -537,7 +696,7 @@ class Game {
     return false;
   }
 
-  checkGameOver(context, step) {
+  checkGameOver(step: GameStep) {
     let gameOver = false;
     let message = "";
     if (this.accept >= 5) { // libbys win from 5 accepted PRs
@@ -546,7 +705,7 @@ class Game {
     } else if (this.reject >= 6) { // dillons win from 6 rejected PRs
       gameOver = true;
       message = ":nollid: dillons win! :dillon:";
-    } else if (step && (step === 'vote') && (this.reject >= 3) && (this.players[this.reviewer].role === 'Dillon')) {
+    } else if (step && (step === 'vote') && (this.reject >= 3) && (this.players[this.reviewer!].role === 'Dillon')) {
       // dillons win because Dillon promoted to reviewer after 3 rejected PRs
       gameOver = true;
       message = `${this.name(this.Dillon)} was Dillon and became code reviewer!\n:nollid: dillons win! :dillon:`;
@@ -650,7 +809,7 @@ class Game {
   async selectCard(index, context) {
     // If there are currently 3 cards, it was the manager's pick
     if (this.hand.length === 3) {
-      this.discard.push(this.hand.splice(parseInt(index), 1));
+      this.discard.push(...this.hand.splice(parseInt(index), 1));
       await this.sendCards(this.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
       await this.printMessage(`${this.name(this.manager)} passed 2 cards to ${this.name(this.reviewer)}.`, context);
     } else { // Otherwise, it was the reviewer picking the card to play
@@ -742,11 +901,6 @@ class Game {
     if (!this.checkGameOver(context)) {
       this.startNextRound(context);
     }
-  }
-
-  async unpinPinnedMessage(context) {
-    await unpinMessage(this.channel, this.pinnedMessage, context);
-    this.pinnedMessage = undefined;
   }
 }
 
@@ -847,76 +1001,9 @@ function checkGameOver(game) {
   }
 }
 
-async function postLobby(game, context, respond) {
-  const buttons = {
-    type: "actions",
-    elements: [
-      {
-        type:"button" ,
-        "action_id": "lobby_join",
-        "text": {
-          "type": "plain_text",
-          "text": "Join Game",
-          "emoji": true
-        },
-        "value": `${game.channel}_${game.gameId}_join`,
-      },
-      {
-        type:"button" ,
-        "action_id": "lobby_leave",
-        "text": {
-          "type": "plain_text",
-          "text": "Leave Game",
-          "emoji": true
-        },
-        "value": `${game.channel}_${game.gameId}_leave`,
-      }
-    ]
-  };
 
-  if (Object.keys(game.players).length >= 3) {
-    buttons.elements.push({
-      type:"button" ,
-      "action_id": "start",
-      "text": {
-        "type": "plain_text",
-        "text": "Start Game!",
-        "emoji": true
-      },
-      "value": `${game.channel}_${game.gameId}_start`,
-      "style": "primary"
-    });
-  }
 
-  const blocks = [
-    {
-      type: "section",
-      text: {
-        "type": "mrkdwn",
-        "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(game.players).map(player => game.name(player)).join(", ")}\nClick below to join!`
-      }
-    },
-    {
-      "type": "divider"
-    },
-    buttons
-  ];
-
-  if (respond) {
-    await respond({
-      blocks: blocks,
-      "replace_original": true
-    });
-  } else {
-    return await app.client.chat.postMessage({
-      token: context.botToken,
-      channel: game.channel,
-      blocks: blocks
-    });
-  }
-}
-
-app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
+const lobbyAction: ActionHandler = async ({body, ack, respond, context}) => {
   const game = context.game;
   const user = body.user.id;
   const choice = context.value;
@@ -935,7 +1022,9 @@ app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context})
   }
 
   postLobby(game, context, respond);
-});
+};
+
+app.action(/^lobby_.*$/, actionMiddleware, );
 
 app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
   const game = context.game;
@@ -944,41 +1033,41 @@ app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
   game.start(context);
 });
 
-async function clearPins(channel, context) {
-  // Remove old pinned messages
-  const response = await app.client.pins.list({
-    token: context.botToken,
-    channel: channel,
-  });
+// async function clearPins(channel, context) {
+//   // Remove old pinned messages
+//   const response = await app.client.pins.list({
+//     token: context.botToken,
+//     channel: channel,
+//   });
 
-  await response.items.map(async function(item) {await unpinMessage(
-    channel, item.message.ts, context
-  )});
-}
+//   await response.items.map(async function(item) {await unpinMessage(
+//     channel, item.message.ts, context
+//   )});
+// }
 
-async function createLobby(channel, context) {
-  clearPins(channel, context);
+// /*async function createLobby(channel, context) {
+//   clearPins(channel, context);
 
-  const game = new Game(channel, context.botToken);
-  GAMES[channel] = game;
-  game.createLobby(context);
-}
+//   const game = new Game(channel, context.botToken);
+//   GAMES[channel] = game;
+//   game.createLobby(context);
+// }*/
 
-async function pinMessage(channel, ts, context) {
-  await app.client.pins.add({
-    token: context.botToken,
-    channel: channel,
-    timestamp: ts
-  });
-}
+// async function pinMessage(channel, ts, context) {
+//   await app.client.pins.add({
+//     token: context.botToken,
+//     channel: channel,
+//     timestamp: ts
+//   });
+// }
 
-async function unpinMessage(channel, ts, context) {
-  await app.client.pins.remove({
-    token: context.botToken,
-    channel: channel,
-    timestamp: ts
-  });
-}
+// async function unpinMessage(channel, ts, context) {
+//   await app.client.pins.remove({
+//     token: context.botToken,
+//     channel: channel,
+//     timestamp: ts
+//   });
+// }
 
 
 
