@@ -1,43 +1,5 @@
-// Require the Bolt package (github.com/slackapi/bolt)
-const { App } = require("@slack/bolt");
-const { Datastore } = require('@google-cloud/datastore');
-
-// Creates a datastore client
-const datastore = new Datastore();
-const datastoreKey = datastore.key(["secret-dillon", "games"]);
-
-// Create the bolt app
-const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET
-});
 
 const GAMES = {};
-
-async function saveGames() {
-  try {
-    await datastore.upsert({
-      key: datastoreKey,
-      data: JSON.parse(JSON.stringify(GAMES))
-    });
-  } catch(e) {
-    console.log(e);
-    console.log(GAMES);
-  }
-}
-
-async function loadGames() {
-  // Check if games already exists and if so, load it.
-  const [games] = await datastore.get(datastoreKey);
-
-  for (const game in games) {
-    GAMES[game] = Object.assign(new Game(), games[game]);
-    GAMES[game].players = Object.keys(games[game].players).reduce((obj, player) => {
-      obj[player] = Object.assign(new Player(), games[game].players[player]);
-      return obj
-    }, {});
-  }
-}
 
 /**
  * Randomize array element order in-place.
@@ -96,7 +58,7 @@ class Player {
     if (userInfo) {
       this.state = "employed";
       this.name = userInfo.user.profile.display_name;
-      this.realName = userInfo.user.profile.real_name;
+      this.realName = userInfo.user.profile.real_name
     }
   }
 }
@@ -206,12 +168,6 @@ class Game {
           message += `\nThe other dillons are: ${this.dillons.filter(id => id !== player).map(id => this.name(id))}`;
         }
       }
-
-      app.client.chat.postMessage({
-        token: context.botToken,
-        channel: player,
-        text: message
-      });
     }
 
     // Set up the rest of the variables
@@ -228,8 +184,8 @@ class Game {
     this.statusMessage = undefined;
 
     //await this.status(context);
-    await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:", context);
-    await this.sendNominationForm(context);
+    //await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:", context);
+    //await this.sendNominationForm(context);
   }
 
   async status(context) {
@@ -683,7 +639,7 @@ class Game {
   async selectCard(index, context) {
     // If there are currently 3 cards, it was the manager's pick
     if (this.hand.length === 3) {
-      this.discard.push(...this.hand.splice(parseInt(index), 1));
+      this.discard.push(this.hand.splice(parseInt(index), 1));
       await this.sendCards(this.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
       await this.printMessage(`${this.name(this.manager)} passed 2 cards to ${this.name(this.reviewer)}.`, context);
     } else { // Otherwise, it was the reviewer picking the card to play
@@ -783,301 +739,28 @@ class Game {
   }
 }
 
-app.action("new_game", async ({body, ack, respond, context}) => {
-  ack();
-  respond({"delete_original": true});
-  await createLobby(body.channel.id, context);
-  await saveGames();
-});
-
-app.action(/^nominate_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  context.game.nominate(context.value, context);
-  await saveGames();
-});
-
-app.action(/^vote_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
-  await context.game.vote(body.user.id, context.value, context, respond);
-  checkGameOver(context.game);
-  await saveGames();
-});
-
-app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  const game = context.game;
-
-  // Send a message to the manager asking whether they'd like to veto
-  await app.client.chat.postMessage({
-    token: context.botToken,
-    channel: game.manager,
-    blocks: [
-      {
-        type: "section",
-        text: {
-          "type": "mrkdwn",
-          "text": `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`
-        }
-      },
-      {
-        type: "actions",
-        elements: [
-          {
-            type:"button" ,
-            "action_id": "veto_ja",
-            "text": {
-              "type": "plain_text",
-              "text": "Ja!",
-              "emoji": true
-            },
-            "value": `${game.channel}_${game.gameId}_ja`,
-            "style": "primary"
-          },
-          {
-            type:"button" ,
-            "action_id": "veto_nein",
-            "text": {
-              "type": "plain_text",
-              "text": "Nein!",
-              "emoji": true
-            },
-            "value": `${game.channel}_${game.gameId}_nein`,
-            "style": "danger"
-          }
-        ]
-      }
-    ]
-  });
-  await saveGames();
-});
-
-app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.vetoResponse(context.value, context);
-  checkGameOver(context.game);
-  await saveGames();
-});
-
-app.action(/^selectCard_\d$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.selectCard(context.value, context);
-  checkGameOver(context.game);
-  await saveGames();
-});
-
-app.action(/^investigate_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.investigate(context.value, context);
-  await saveGames();
-});
-
-app.action(/^special_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.specialPromotion(context.value, context);
-  await saveGames();
-});
-
-app.action(/^fire_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.fire(context.value, context);
-  checkGameOver(context.game);
-  await saveGames();
-});
-
-function checkGameOver(game) {
-  if (game.step === "over") {
-    delete GAMES[game.channel];
-  }
-}
-
-async function postLobby(game, context, respond) {
-  const buttons = {
-    type: "actions",
-    elements: [
-      {
-        type:"button" ,
-        "action_id": "lobby_join",
-        "text": {
-          "type": "plain_text",
-          "text": "Join Game",
-          "emoji": true
-        },
-        "value": `${game.channel}_${game.gameId}_join`,
-      },
-      {
-        type:"button" ,
-        "action_id": "lobby_leave",
-        "text": {
-          "type": "plain_text",
-          "text": "Leave Game",
-          "emoji": true
-        },
-        "value": `${game.channel}_${game.gameId}_leave`,
-      }
-    ]
-  };
-
-  if (Object.keys(game.players).length >= 3) {
-    buttons.elements.push({
-      type:"button" ,
-      "action_id": "start",
-      "text": {
-        "type": "plain_text",
-        "text": "Start Game!",
-        "emoji": true
-      },
-      "value": `${game.channel}_${game.gameId}_start`,
-      "style": "primary"
-    });
-  }
-
-  const blocks = [
-    {
-      type: "section",
-      text: {
-        "type": "mrkdwn",
-        "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(game.players).map(player => game.name(player)).join(", ")}\nClick below to join!`
-      }
-    },
-    {
-      "type": "divider"
-    },
-    buttons
-  ];
-
-  if (respond) {
-    await respond({
-      blocks: blocks,
-      "replace_original": true
-    });
-  } else {
-    return await app.client.chat.postMessage({
-      token: context.botToken,
-      channel: game.channel,
-      blocks: blocks
-    });
-  }
-}
-
-app.action(/^lobby_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  const game = context.game;
-  const user = body.user.id;
-  const choice = context.value;
-
-  if (choice === "join") {
-    if (Object.keys(game.players).length < 10) {
-      const userInfo = await app.client.users.info({
-        token: context.botToken,
-        user: user,
-      });
-
-      game.addPlayer(user, userInfo);
+g = new Game('channel', 'botToken');
+["a", "b", "c"].map(letter => g.addPlayer(letter, {
+  user: {
+    profile: {
+      display_name: letter,
+      real_name: letter + letter
     }
-  } else {
-    game.removePlayer(user);
   }
+}));
+g.start(null);
 
-  postLobby(game, context, respond);
-  await saveGames();
-});
+// Dump game state to JSON
+o = JSON.parse(JSON.stringify({'channelID': g}));
 
-app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
-  const game = context.game;
-  await game.unpinPinnedMessage(context);
-  await respond({"delete_original": true});
-  game.start(context);
-  await saveGames();
-});
-
-async function clearPins(channel, context) {
-  // Remove old pinned messages
-  const response = await app.client.pins.list({
-    token: context.botToken,
-    channel: channel,
-  });
-
-  await response.items.map(async function(item) {await unpinMessage(
-    channel, item.message.ts, context
-  )});
+g2 = {};
+for (const game in o) {
+  g2[game] = Object.assign(new Game(), o[game]);
+  g2[game].players = Object.keys(o[game].players).reduce((obj, player) => {
+    obj[player] = Object.assign(new Player(), o[game].players[player]);
+    return obj
+  }, {});
 }
 
-async function createLobby(channel, context) {
-  clearPins(channel, context);
-
-  const game = new Game(channel, context.botToken);
-  GAMES[channel] = game;
-  game.createLobby(context);
-}
-
-async function pinMessage(channel, ts, context) {
-  await app.client.pins.add({
-    token: context.botToken,
-    channel: channel,
-    timestamp: ts
-  });
-}
-
-async function unpinMessage(channel, ts, context) {
-  await app.client.pins.remove({
-    token: context.botToken,
-    channel: channel,
-    timestamp: ts
-  });
-}
-
-
-
-app.message(/^new$/, async ({message, context, say}) => {
-  if (message.channel in GAMES) {
-    app.client.chat.postEphemeral({
-      token: context.botToken,
-      channel: message.channel,
-      user: message.user,
-      "blocks": [
-        {
-          "type": "section",
-          "text": {
-            "type": "mrkdwn",
-            "text": "A game is already in progress - are you sure you want to end the current game and start a new one?"
-          },
-          "accessory": {
-            "action_id": "new_game",
-            "type": "button",
-            "text": {
-              "type": "plain_text",
-              "text": "New Game",
-              "emoji": true
-            },
-            "value": "new_game",
-            "style": "danger"
-          }
-        }
-      ]
-    });
-    return;
-  } else {
-    //await newGame(message.channel, message.user, context);
-
-    // TODO: Remove below test
-    //const game = GAMES[message.channel];
-    // game.step = "legislative";
-    //game.manager = "U0766LV3J";
-    //game.reviewer = "U0766LV3J";
-    // sendManagerCards(game, context);
-    //sendInvestigateForm(game, context);
-    // sendSpecialForm(game, context);
-    // peak(game, context);
-    // sendFireForm(game, context);
-    await createLobby(message.channel, context);
-  }
-  await saveGames();
-});
-
-(async () => {
-  // Load existing games
-  await loadGames();
-
-  // Start your app
-  await app.start(process.env.PORT || 3000);
-
-  console.log('⚡️ Bolt app is running!');
-})();
+// Load from JSON
+console.log(g2);
