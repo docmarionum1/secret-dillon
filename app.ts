@@ -85,7 +85,7 @@ class Game {
   players: {[playerId: string]: Player};
   pinnedMessage?: string;
   botToken: string;
-  
+
   constructor(channel: string, botToken: string, gameId?: string, players?: {[playerId: string]: Player}) {
     this.channel = channel;
     this.botToken = botToken;
@@ -105,10 +105,10 @@ class Game {
       token: this.botToken,
       channel: this.channel,
     }) as PinsListResult;
-  
+
     response.items.map(async (item) => await this.unpinMessage(item.message.ts));
   }
-  
+
   async pinMessage(ts: string) {
     await app.client.pins.add({
       token: this.botToken,
@@ -116,7 +116,7 @@ class Game {
       timestamp: ts
     });
   }
-  
+
   async unpinMessage(ts: string) {
     await app.client.pins.remove({
       token: this.botToken,
@@ -187,7 +187,7 @@ class LobbyGame extends Game {
         }
       ]
     };
-  
+
     if (Object.keys(this.players).length >= 5) {
       buttons.elements.push({
         type:"button" ,
@@ -201,7 +201,7 @@ class LobbyGame extends Game {
         "style": "primary"
       });
     }
-  
+
     const blocks: KnownBlock[] = [
       {
         type: "section",
@@ -215,7 +215,7 @@ class LobbyGame extends Game {
       },
       buttons
     ];
-  
+
     if (respond) {
       return respond({
         blocks: blocks,
@@ -257,7 +257,7 @@ class InProgressGame extends Game {
 
   constructor({channel, gameId, players, botToken}: LobbyGame) {
     super(channel, botToken, gameId, players);
-    
+
     this.turnOrder = Object.keys(this.players);
     shuffleArray(this.turnOrder);
     this.numPlayers = this.turnOrder.length;
@@ -538,7 +538,7 @@ class InProgressGame extends Game {
   }
 
   async sendForm(
-    type: "nominate" | "investigate" | "special" | "fire", 
+    type: "nominate" | "investigate" | "special" | "fire",
     groupText: string, privateText: string, eligiblePlayers: string[]
   ) {
     await this.printMessage(groupText);
@@ -561,7 +561,7 @@ class InProgressGame extends Game {
         {
           type: "actions",
 
-          elements: eligiblePlayers.map((player, index) => {
+          elements: eligiblePlayers.map((player) => {
             return {
               type: "button",
               "action_id": `${type}_${player}`,
@@ -659,6 +659,11 @@ class InProgressGame extends Game {
       return;
     }
 
+    // If three or more rejects have been played, report that the current reviewer is not Dillon
+    if (this.reject >= 3) {
+      this.printMessage(`${this.name(this.reviewer!)} is not Dillon!`);
+    }
+
     // Set the next ineligible reviewers
     if (this.turnOrder.length <= 5) {
       this.ineligibleReviewers = [this.reviewer!];
@@ -696,7 +701,7 @@ class InProgressGame extends Game {
     return false;
   }
 
-  checkGameOver(step: GameStep) {
+  checkGameOver(step?: GameStep) {
     let gameOver = false;
     let message = "";
     if (this.accept >= 5) { // libbys win from 5 accepted PRs
@@ -717,14 +722,14 @@ class InProgressGame extends Game {
     if (gameOver) {
       //delete GAMES[game.channel];
       this.step = "over";
-      this.printMessage(message, context);
+      this.printMessage(message);
     }
 
     return gameOver;
   }
 
-  async sendCards(player, instructions, context, includeVeto=true) {
-    const buttons = this.hand.map((card, index) => {
+  async sendCards(playerId: string, instructions: string, includeVeto=true) {
+    const buttons: ActionsBlock['elements'] = this.hand.map((card, index) => {
       return {
         type:"button" ,
         "action_id": "selectCard_" + index,
@@ -753,8 +758,9 @@ class InProgressGame extends Game {
     }
 
     app.client.chat.postMessage({
-      token: context.botToken,
-      channel: player,
+      token: this.botToken,
+      channel: playerId,
+      text: instructions,
       blocks: [
         {
           type: "section",
@@ -771,21 +777,21 @@ class InProgressGame extends Game {
     });
   }
 
-  async sendManagerCards(context) {
+  async sendManagerCards() {
     this.hand = this.deck.splice(this.deck.length - 3, 3);
 
-    await this.sendCards(this.manager, `Choose a card to *discard*. The other two will be passed to ${this.name(this.reviewer)}.`, context);
-    await this.printMessage(`${this.name(this.manager)} drew 3 cards.`, context);
+    await this.sendCards(this.manager, `Choose a card to *discard*. The other two will be passed to ${this.name(this.reviewer!)}.`);
+    await this.printMessage(`${this.name(this.manager)} drew 3 cards.`);
   }
 
-  async vetoResponse(choice, context) {
+  async vetoResponse(choice: "ja" | "nein") {
     if (choice === "ja") {
       // If yes, discard the cards
-      this.discard.push(this.hand.pop());
-      this.discard.push(this.hand.pop());
+      this.discard.push(this.hand.pop()!);
+      this.discard.push(this.hand.pop()!);
 
       // If this pushed the promotionTracker to 3, end this turn
-      const finishedTurn = await this.incrementPromotionTracker(context);
+      const finishedTurn = await this.incrementPromotionTracker();
       if (finishedTurn) {
         return;
       }
@@ -797,9 +803,9 @@ class InProgressGame extends Game {
       }
 
       // Send new cards to manager
-      await this.sendManagerCards(context);
+      await this.sendManagerCards();
 
-      await this.printMessage(`*${this.name(this.reviewer)} and ${this.name(this.manager)} vetoed the PR.*`, context);
+      await this.printMessage(`*${this.name(this.reviewer)} and ${this.name(this.manager)} vetoed the PR.*`);
     } else {
       await this.sendCards(this.reviewer, `${this.name(this.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
       await this.printMessage(`${this.name(this.reviewer)} suggested a veto but ${this.name(this.manager)} *rejected* it. Waiting for ${this.name(this.reviewer)} to play a card.`);
@@ -921,19 +927,21 @@ app.action(/^vote_.*$/, actionMiddleware, async({body, ack, respond, context}) =
 });
 
 app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
+  await respond({"delete_original": true, text: ""});
   const game = context.game;
+  const text = `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`;
 
   // Send a message to the manager asking whether they'd like to veto
   await app.client.chat.postMessage({
     token: context.botToken,
     channel: game.manager,
+    text: text,
     blocks: [
       {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`
+          "text": text
         }
       },
       {
@@ -968,20 +976,20 @@ app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
 });
 
 app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.vetoResponse(context.value, context);
+  await respond({"delete_original": true, text: ""});
+  await context.game.vetoResponse(context.value);
   checkGameOver(context.game);
 });
 
 app.action(/^selectCard_\d$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.selectCard(context.value, context);
+  await respond({"delete_original": true, text: ""});
+  await context.game.selectCard(context.value);
   checkGameOver(context.game);
 });
 
 app.action(/^investigate_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
-  await context.game.investigate(context.value, context);
+  await respond({"delete_original": true, text: ""});
+  await context.game.investigate(context.value);
 });
 
 app.action(/^special_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
