@@ -1,8 +1,6 @@
-import { App, Middleware, RespondFn, BlockAction, ButtonAction, SlackAction, SlackActionMiddlewareArgs } from "@slack/bolt";
+import { App, Middleware, RespondFn, BlockAction, ButtonAction, SlackAction, SlackActionMiddlewareArgs, AckFn, NextMiddleware } from "@slack/bolt";
 import {ChatPostMessageArguments, WebClient, WebAPICallResult, ActionsBlock, KnownBlock} from '@slack/web-api';
-import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep } from "./secret-dillon";
-
-
+import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Role } from "./secret-dillon";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -24,29 +22,7 @@ function shuffleArray(array: any[]) {
     }
 }
 
-const actionMiddleware: ActionHandler = async function({
-  body, ack, respond, context, next
-}) {
-  ack();
-  const value = body.actions[0].value;
-  const [channel, gameId, actionValue] = value.split("_");
-  const game = GAMES[channel];
 
-  // Make sure the game exists and its for the right game
-  if (!game || game.gameId !== gameId) {
-    respond({
-      "delete_original": true,
-      text: "rm"
-    });
-    return;
-  }
-
-  game.botToken = context.botToken;
-  context.game = game;
-  context.value = actionValue;
-
-  next();
-};
 
 const NUM_LIBBYS: {[numPlayers: number]: number} = {
   3: 1,
@@ -70,12 +46,13 @@ class Player {
   state: "employed" | "fired";
   name: string;
   realName: string;
-  role?: string;
+  role: Role;
 
   constructor(userInfo: UserInfoResult) {
     this.state = "employed";
     this.name = userInfo.user.profile.display_name;
-    this.realName = userInfo.user.profile.real_name
+    this.realName = userInfo.user.profile.real_name;
+    this.role = "waiting";
   }
 }
 
@@ -144,6 +121,52 @@ class Game {
     return this.players[player].name;
   }
 }
+
+// import '@slack/bolt';
+
+// import {Context} from "@slack/bolt";
+// import { StringIndexed } from "@slack/bolt/dist/types/helpers";
+//import { Context } from "@slack/bolt/dist/types/middleware";
+
+// const c: Context = {};
+// c.game
+// declare global {
+//   interface Context {
+//     game: Game;
+//   }
+// }
+
+// interface ActionHanlerProps {
+//   body: BlockAction<ButtonAction>;
+//   ack: AckFn<void>;
+//   respond: RespondFn;
+//   context: Context;
+//   next: NextMiddleware;
+// }
+
+const actionMiddleware: ActionHandler = async function({
+  body, ack, respond, context, next
+}) {
+  ack();
+  const value = body.actions[0].value;
+  const [channel, gameId, actionValue] = value.split("_");
+  const game = GAMES[channel];
+
+  // Make sure the game exists and its for the right game
+  if (!game || game.gameId !== gameId) {
+    respond({
+      "delete_original": true,
+      text: "rm"
+    });
+    return;
+  }
+
+  game.botToken = context.botToken;
+  context.game = game;
+  context.value = actionValue;
+
+  next();
+};
 
 class LobbyGame extends Game {
   step: "lobby";
@@ -365,7 +388,6 @@ class InProgressGame extends Game {
       });
     }
 
-    //await this.status(context);
     await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:");
     await this.sendNominationForm();
   }
@@ -420,10 +442,10 @@ class InProgressGame extends Game {
     }
   }
 
-  async printMessage(message: string | KnownBlock[]) {
+  async printMessage(message: string | KnownBlock[], channel?: string) {
     const payload: ChatPostMessageArguments = {
       token: this.botToken,
-      channel: this.channel,
+      channel: channel ? channel : this.channel,
       blocks: Array.isArray(message) ? message : undefined,
       text: Array.isArray(message) ? "" : message
     };
@@ -805,28 +827,29 @@ class InProgressGame extends Game {
       // Send new cards to manager
       await this.sendManagerCards();
 
-      await this.printMessage(`*${this.name(this.reviewer)} and ${this.name(this.manager)} vetoed the PR.*`);
+      await this.printMessage(`*${this.name(this.reviewer!)} and ${this.name(this.manager)} vetoed the PR.*`);
     } else {
-      await this.sendCards(this.reviewer, `${this.name(this.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, context, false);
-      await this.printMessage(`${this.name(this.reviewer)} suggested a veto but ${this.name(this.manager)} *rejected* it. Waiting for ${this.name(this.reviewer)} to play a card.`);
+      await this.sendCards(this.reviewer!, `${this.name(this.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, false);
+      await this.printMessage(`${this.name(this.reviewer!)} suggested a veto but ${this.name(this.manager)} *rejected* it. Waiting for ${this.name(this.reviewer!)} to play a card.`);
     }
   }
 
-  async selectCard(index, context) {
+  async selectCard(indexString: string) {
+    const index = parseInt(indexString);
     // If there are currently 3 cards, it was the manager's pick
     if (this.hand.length === 3) {
-      this.discard.push(...this.hand.splice(parseInt(index), 1));
-      await this.sendCards(this.reviewer, "Choose a card to *play*. The other card will be discarded.", context);
-      await this.printMessage(`${this.name(this.manager)} passed 2 cards to ${this.name(this.reviewer)}.`, context);
+      this.discard.push(...this.hand.splice(index, 1));
+      await this.sendCards(this.reviewer!, "Choose a card to *play*. The other card will be discarded.");
+      await this.printMessage(`${this.name(this.manager)} passed 2 cards to ${this.name(this.reviewer!)}.`);
     } else { // Otherwise, it was the reviewer picking the card to play
       // Increment the chosen counter
-      const chosen = this.hand.splice(parseInt(index), 1)[0];
+      const chosen = this.hand.splice(index, 1)[0];
       this[chosen]++;
 
-      await this.printMessage(`${this.name(this.reviewer)} played ${chosen}.`, context);
+      await this.printMessage(`${this.name(this.reviewer!)} played ${chosen}.`);
 
       // Put the other card into discard
-      this.discard.push(this.hand.pop());
+      this.discard.push(this.hand.pop()!);
 
       // If the deck has fewer than 3 cards left, shuffle deck and discard together
       if (this.deck.length < 3) {
@@ -835,95 +858,102 @@ class InProgressGame extends Game {
       }
 
       // Check if the game is over
-      if (this.checkGameOver(context)) {
+      if (this.checkGameOver()) {
         return;
       }
 
       // Move to the executive step
       if (chosen === 'accept' || this.managerialPowers[this.reject] === undefined) {
-        await this.startNextRound(context);
+        await this.startNextRound();
       } else {
-        await this.managerialStep(context);
+        await this.managerialStep();
       }
     }
   }
 
-  async managerialStep(context) {
+  async managerialStep() {
     const power = this.managerialPowers[this.reject];
     delete this.managerialPowers[this.reject];
     this.step = "managerial";
 
     if (power === "investigate") {
-      await this.sendInvestigateForm(context);
+      await this.sendInvestigateForm();
     } else if (power === "special") {
-      await this.sendSpecialForm(context);
+      await this.sendSpecialForm();
     } else if (power === "peak") {
-      await this.peak(context);
+      await this.peek();
     } else if (power === "fire") {
-      await this.sendFireForm(context);
+      await this.sendFireForm();
     }
 
     return true;
   }
 
-  async peak(context) {
+  async peek() {
     await this.printMessage(
       `The top 3 cards of the deck are \n-${this.deck.slice(this.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
-      context, this.manager
+      this.manager
     );
-    await this.printMessage(`Showing ${this.name(this.manager)} the top three cards of the PR deck.`, context);
+    await this.printMessage(`Showing ${this.name(this.manager)} the top three cards of the PR deck.`);
 
-    await this.startNextRound(context);
+    await this.startNextRound();
   }
 
-  async investigate(player, context) {
-    await this.printMessage(
-      `${this.name(player)} is a ${this.players[player].role.toLowerCase()}.`,
-      context, this.manager
-    );
-    await this.printMessage(`${this.name(this.manager)} investigated ${this.name(player)}.`, context);
+  async investigate(player: string) {
+    if (this.players[player]) {
+      await this.printMessage(
+        `${this.name(player)} is a ${this.players[player].role.toLowerCase()}.`,
+        this.manager
+      );
+    }
+    await this.printMessage(`${this.name(this.manager)} investigated ${this.name(player)}.`);
 
-    await this.startNextRound(context);
+    await this.startNextRound();
   }
 
-  async specialPromotion(player, context) {
+  async specialPromotion(player: string) {
     // Start the next round with the special manager and without rotating the manager index
     this.manager = player;
     this.step = "nominate";
-    this.reviewer = null;
+    this.reviewer = undefined;
     this.promotionTracker = 0;
     await this.printMessage(
-      `${this.name(this.manager)} nominated ${this.name(player)} to go up for special promotion to manager.`,
-      context
+      `${this.name(this.manager)} nominated ${this.name(player)} to go up for special promotion to manager.`
     );
-    await this.sendNominationForm(context);
+    await this.sendNominationForm();
   }
 
-  async fire(player, context) {
-    await this.printMessage(`☠️ ${this.name(this.manager)} fired ${this.name(player)}. ☠️`, context);
+  async fire(player: string,) {
+    await this.printMessage(`☠️ ${this.name(this.manager)} fired ${this.name(player)}. ☠️`);
 
     this.players[player].state = "fired";
     this.turnOrder.splice(this.turnOrder.indexOf(player), 1);
-    if (!this.checkGameOver(context)) {
-      this.startNextRound(context);
+    if (!this.checkGameOver()) {
+      this.startNextRound();
     }
   }
 }
 
+async function newGame(channel_id: string, botToken: string) {
+  const game = new LobbyGame(channel_id, botToken);
+  GAMES[channel_id] = game;
+  await game.createLobby();
+}
+
 app.action("new_game", async ({body, ack, respond, context}) => {
   ack();
-  respond({"delete_original": true});
-  await createLobby(body.channel.id, context);
+  respond({"delete_original": true, text: ""});
+  await newGame(body.channel.id, context.botToken);
 });
 
 app.action(/^nominate_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
+  await respond({"delete_original": true, text: ""});
   context.game.nominate(context.value, context);
 });
 
 app.action(/^vote_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
   await context.game.vote(body.user.id, context.value, context, respond);
-  checkGameOver(context.game);
+  context.game.checkGameOver();
 });
 
 app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
@@ -993,25 +1023,17 @@ app.action(/^investigate_.*$/, actionMiddleware, async ({body, ack, respond, con
 });
 
 app.action(/^special_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
+  await respond({"delete_original": true, text: ""});
   await context.game.specialPromotion(context.value, context);
 });
 
 app.action(/^fire_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true});
+  await respond({"delete_original": true, text: ""});
   await context.game.fire(context.value, context);
-  checkGameOver(context.game);
+  context.game.checkGameOver();
 });
 
-function checkGameOver(game) {
-  if (game.step === "over") {
-    delete GAMES[game.channel];
-  }
-}
-
-
-
-const lobbyAction: ActionHandler = async ({body, ack, respond, context}) => {
+const lobbyAction: ActionHandler = async ({body, respond, context}) => {
   const game = context.game;
   const user = body.user.id;
   const choice = context.value;
@@ -1029,68 +1051,33 @@ const lobbyAction: ActionHandler = async ({body, ack, respond, context}) => {
     game.removePlayer(user);
   }
 
-  postLobby(game, context, respond);
+  game.postLobby(respond);
 };
 
-app.action(/^lobby_.*$/, actionMiddleware, );
+app.action(/^lobby_.*$/, actionMiddleware, lobbyAction);
 
 app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
   const game = context.game;
   await game.unpinPinnedMessage(context);
-  await respond({"delete_original": true});
+  await respond({"delete_original": true, text: ""});
   game.start(context);
 });
-
-// async function clearPins(channel, context) {
-//   // Remove old pinned messages
-//   const response = await app.client.pins.list({
-//     token: context.botToken,
-//     channel: channel,
-//   });
-
-//   await response.items.map(async function(item) {await unpinMessage(
-//     channel, item.message.ts, context
-//   )});
-// }
-
-// /*async function createLobby(channel, context) {
-//   clearPins(channel, context);
-
-//   const game = new Game(channel, context.botToken);
-//   GAMES[channel] = game;
-//   game.createLobby(context);
-// }*/
-
-// async function pinMessage(channel, ts, context) {
-//   await app.client.pins.add({
-//     token: context.botToken,
-//     channel: channel,
-//     timestamp: ts
-//   });
-// }
-
-// async function unpinMessage(channel, ts, context) {
-//   await app.client.pins.remove({
-//     token: context.botToken,
-//     channel: channel,
-//     timestamp: ts
-//   });
-// }
-
 
 
 app.message(/^new$/, async ({message, context, say}) => {
   if (message.channel in GAMES) {
+    const text = "A game is already in progress - are you sure you want to end the current game and start a new one?";
     app.client.chat.postEphemeral({
       token: context.botToken,
       channel: message.channel,
       user: message.user,
+      text: text,
       "blocks": [
         {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "A game is already in progress - are you sure you want to end the current game and start a new one?"
+            "text": text
           },
           "accessory": {
             "action_id": "new_game",
@@ -1106,7 +1093,6 @@ app.message(/^new$/, async ({message, context, say}) => {
         }
       ]
     });
-    return;
   } else {
     //await newGame(message.channel, message.user, context);
 
@@ -1120,7 +1106,7 @@ app.message(/^new$/, async ({message, context, say}) => {
     // sendSpecialForm(game, context);
     // peak(game, context);
     // sendFireForm(game, context);
-    await createLobby(message.channel, context);
+    await newGame(message.channel, context.botToken);
   }
 });
 
