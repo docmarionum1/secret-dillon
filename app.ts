@@ -1,7 +1,7 @@
 import { App, RespondFn } from "@slack/bolt";
 import {ChatPostMessageArguments, ActionsBlock, KnownBlock} from '@slack/web-api';
 import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Game, LobbyGame, InProgressGame, NumPlayers, ManagerialPower, Vote, NominateGame, PostNominateGame } from "./secret-dillon";
-const { Datastore } = require('@google-cloud/datastore');
+import { Datastore } from '@google-cloud/datastore';
 
 // Creates a datastore client
 const datastore = new Datastore();
@@ -25,7 +25,8 @@ async function saveGame(game: Game) {
 
 async function loadGame(channel: string) {
   const datastoreKey = datastore.key(["secret-dillon", "games", channel]);
-  return await datastore.get(datastoreKey) as Game;
+  const [game] = await datastore.get(datastoreKey);
+  return game as Game;
 }
 
 
