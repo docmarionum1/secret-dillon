@@ -893,14 +893,16 @@ async function investigate(game: InProgressGame, player: string) {
 }
 
 async function specialPromotion(game: InProgressGame, player: string) {
+  await printMessage(game,
+    `${name(game, game.manager)} nominated ${name(game, player)} to go up for special promotion to manager.`
+  );
+
   // Start the next round with the special manager and without rotating the manager index
   game.manager = player;
   game.step = "nominate";
   game.reviewer = undefined;
   game.promotionTracker = 0;
-  await printMessage(game,
-    `${name(game, game.manager)} nominated ${name(game, player)} to go up for special promotion to manager.`
-  );
+
   await sendNominationForm(game);
 }
 
