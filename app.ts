@@ -1,13 +1,41 @@
 import { App, Middleware, RespondFn, BlockAction, ButtonAction, SlackAction, SlackActionMiddlewareArgs, AckFn, NextMiddleware } from "@slack/bolt";
 import {ChatPostMessageArguments, WebClient, WebAPICallResult, ActionsBlock, KnownBlock} from '@slack/web-api';
-import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Role } from "./secret-dillon";
+import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Role, Player, Game, LobbyGame, InProgressGame, NumPlayers, ManagerialPower, Vote, NominateGame, PostNominateGame } from "./secret-dillon";
+const { Datastore } = require('@google-cloud/datastore');
+
+// Creates a datastore client
+const datastore = new Datastore();
+
+async function saveGame(game: Game) {
+  const datastoreKey = datastore.key(["secret-dillon", "games", game.channel]);
+  try {
+    if (game.step === "over") {
+      await datastore.delete(datastoreKey);
+    } else {
+      await datastore.upsert({
+        key: datastoreKey,
+        data: JSON.parse(JSON.stringify(game))
+      });
+    }
+  } catch (e) {
+    console.log(e);
+    console.log(game);
+  }
+}
+
+async function loadGame(channel: string) {
+  const datastoreKey = datastore.key(["secret-dillon", "games", channel]);
+  return await datastore.get(datastoreKey) as Game;
+}
+
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
-const GAMES: {[channelId: string]: Game} = {};
+
+//const GAMES: {[channelId: string]: Game} = {};
 
 /**
  * Randomize array element order in-place.
@@ -22,8 +50,6 @@ function shuffleArray(array: any[]) {
     }
 }
 
-
-
 const NUM_LIBBYS: {[numPlayers: number]: number} = {
   3: 1,
   4: 2,
@@ -35,122 +61,32 @@ const NUM_LIBBYS: {[numPlayers: number]: number} = {
   10: 6
 };
 
-const POWERS = {
+const POWERS: {[power in ManagerialPower]: string} = {
   investigate: "Investigate a player",
   special: "Special promotion",
   fire: "Fire a player",
-  peak: "Peak at the top 3 PR cards"
+  peek: "Peak at the top 3 PR cards"
 };
 
-class Player {
-  state: "employed" | "fired";
-  name: string;
-  realName: string;
-  role: Role;
-
-  constructor(userInfo: UserInfoResult) {
-    this.state = "employed";
-    this.name = userInfo.user.profile.display_name;
-    this.realName = userInfo.user.profile.real_name;
-    this.role = "waiting";
+declare module "@slack/bolt/dist/types/middleware" {
+  interface Context {
+    game: Game;
+    value: string;
+    botToken: string;
   }
 }
 
-class Game {
-  channel: string;
-  gameId: string;
-  players: {[playerId: string]: Player};
-  pinnedMessage?: string;
-  botToken: string;
-
-  constructor(channel: string, botToken: string, gameId?: string, players?: {[playerId: string]: Player}) {
-    this.channel = channel;
-    this.botToken = botToken;
-
-    if (gameId && players) {
-      this.gameId = gameId;
-      this.players = players;
-    } else {
-      this.gameId = Math.round(Math.random() * 99999999).toString();
-      this.players = {};
-    }
-  }
-
-  async clearPins() {
-    // Remove old pinned messages
-    const response = await app.client.pins.list({
-      token: this.botToken,
-      channel: this.channel,
-    }) as PinsListResult;
-
-    response.items.map(async (item) => await this.unpinMessage(item.message.ts));
-  }
-
-  async pinMessage(ts: string) {
-    await app.client.pins.add({
-      token: this.botToken,
-      channel: this.channel,
-      timestamp: ts
-    });
-  }
-
-  async unpinMessage(ts: string) {
-    await app.client.pins.remove({
-      token: this.botToken,
-      channel: this.channel,
-      timestamp: ts
-    });
-  }
-
-  async unpinPinnedMessage() {
-    if (this.pinnedMessage) {
-      await this.unpinMessage(this.pinnedMessage);
-    }
-    this.pinnedMessage = undefined;
-  }
-
-  addPlayer(user: string, userInfo: UserInfoResult) {
-    this.players[user] = new Player(userInfo);
-  }
-
-  removePlayer(user: string) {
-    delete this.players[user];
-  }
-
-  name(player: string) {
-    return this.players[player].name;
-  }
-}
-
-// import '@slack/bolt';
-
-// import {Context} from "@slack/bolt";
-// import { StringIndexed } from "@slack/bolt/dist/types/helpers";
-//import { Context } from "@slack/bolt/dist/types/middleware";
-
-// const c: Context = {};
-// c.game
-// declare global {
-//   interface Context {
-//     game: Game;
-//   }
-// }
-
-// interface ActionHanlerProps {
-//   body: BlockAction<ButtonAction>;
-//   ack: AckFn<void>;
-//   respond: RespondFn;
-//   context: Context;
-//   next: NextMiddleware;
-// }
-
-const actionMiddleware: ActionHandler = async function({
+const actionMiddleware: ActionHandler = async function ({
   body, ack, respond, context, next
 }) {
   ack();
   const value = body.actions[0].value;
   const [channel, gameId, actionValue] = value.split("_");
-  const game = GAMES[channel];
+
+  //TODO: Load game from datastore
+  //const game = GAMES[channel];
+
+  const game = await loadGame(channel);
 
   // Make sure the game exists and its for the right game
   if (!game || game.gameId !== gameId) {
@@ -168,904 +104,823 @@ const actionMiddleware: ActionHandler = async function({
   next();
 };
 
-class LobbyGame extends Game {
-  step: "lobby";
+async function newGame(channel: string, botToken: string): Promise<LobbyGame> {
+  const game: LobbyGame = {
+    channel, botToken,
+    gameId: Math.round(Math.random() * 99999999).toString(),
+    players: {},
+    step: "lobby"
+  };
+  //GAMES[channel] = game;
+  await createLobby(game);
+  return game;
+}
 
-  constructor(channel: string, botToken: string) {
-    super(channel, botToken);
-    this.step = "lobby";
+async function clearPins(game: Game) {
+  // Remove old pinned messages
+  const response = await app.client.pins.list({
+    token: game.botToken,
+    channel: game.channel,
+  }) as PinsListResult;
+
+  response.items.map(async (item) => await unpinMessage(game, item.message.ts));
+}
+
+async function pinMessage(game: Game, ts: string) {
+  await app.client.pins.add({
+    token: game.botToken,
+    channel: game.channel,
+    timestamp: ts
+  });
+}
+
+async function unpinMessage(game: Game, ts: string) {
+  await app.client.pins.remove({
+    token: game.botToken,
+    channel: game.channel,
+    timestamp: ts
+  });
+}
+
+async function unpinPinnedMessage(game: Game) {
+  if (game.pinnedMessage) {
+    await unpinMessage(game, game.pinnedMessage);
   }
+  game.pinnedMessage = undefined;
+}
 
-  async createLobby() {
-    const response = await this.postLobby();
-    if (response) {
-      this.pinnedMessage = response.ts;
-      await this.pinMessage(this.pinnedMessage);
-    }
-  }
+function name(game: Game, player: string) {
+  return game.players[player].name;
+}
 
-  async postLobby (respond?: RespondFn): Promise<ChatPostMessageResult | void> {
-    const buttons: ActionsBlock = {
-      type: "actions",
-      elements: [
-        {
-          type:"button" ,
-          "action_id": "lobby_join",
-          "text": {
-            "type": "plain_text",
-            "text": "Join Game",
-            "emoji": true
-          },
-          "value": `${this.channel}_${this.gameId}_join`,
-        },
-        {
-          type:"button" ,
-          "action_id": "lobby_leave",
-          "text": {
-            "type": "plain_text",
-            "text": "Leave Game",
-            "emoji": true
-          },
-          "value": `${this.channel}_${this.gameId}_leave`,
-        }
-      ]
-    };
+function addPlayer(game: LobbyGame, user: string, userInfo: UserInfoResult) {
+  game.players[user] = {
+    name: userInfo.user.profile.display_name,
+    realName: userInfo.user.profile.real_name,
+    state: "employed",
+    role: "waiting",
+  };
+}
 
-    if (Object.keys(this.players).length >= 5) {
-      buttons.elements.push({
-        type:"button" ,
-        "action_id": "start",
-        "text": {
-          "type": "plain_text",
-          "text": "Start Game!",
-          "emoji": true
-        },
-        "value": `${this.channel}_${this.gameId}_start`,
-        "style": "primary"
-      });
-    }
+function removePlayer(game: LobbyGame, user: string) {
+  delete game.players[user];
+}
 
-    const blocks: KnownBlock[] = [
-      {
-        type: "section",
-        text: {
-          "type": "mrkdwn",
-          "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(this.players).map(player => this.name(player)).join(", ")}\nClick below to join!`
-        }
-      },
-      {
-        "type": "divider"
-      },
-      buttons
-    ];
 
-    if (respond) {
-      return respond({
-        blocks: blocks,
-        "replace_original": true,
-        text: ""
-      });
-    } else {
-      return await app.client.chat.postMessage({
-        token: this.botToken,
-        channel: this.channel,
-        blocks: blocks,
-        text: ""
-      }) as ChatPostMessageResult;
-    }
+
+async function createLobby(game: LobbyGame) {
+  const response = await postLobby(game);
+  if (response) {
+    game.pinnedMessage = response.ts;
+    await pinMessage(game, game.pinnedMessage);
   }
 }
 
-class InProgressGame extends Game {
-  step: GameStep;
-  turnOrder: string[];
-  numPlayers: number;
-  managerIndex: number;
-  manager: string;
-  reviewer?: string;
-  ineligibleReviewers: string[];
-  votes: {[player: string]: "ja" | "nein"};
-  promotionTracker: 0 | 1 | 2 | 3;
-  deck: Card[];
-  discard: Card[];
-  hand: Card[];
-  accept: 0 | 1 | 2 | 3 | 4 | 5;
-  reject: 0 | 1 | 2 | 3 | 4 | 5 | 6;
-  identified: string[];
-  statusMessage?: string;
-  managerialPowers: {[rejectCount: number]: "peak" | "investigate" | "special" | "fire"};
-  Dillon: string;
-  dillons: string[];
-  libbys: string[];
+async function postLobby (game: LobbyGame, respond?: RespondFn): Promise<ChatPostMessageResult | void> {
+  const buttons: ActionsBlock = {
+    type: "actions",
+    elements: [
+      {
+        type:"button" ,
+        "action_id": "lobby_join",
+        "text": {
+          "type": "plain_text",
+          "text": "Join Game",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_join`,
+      },
+      {
+        type:"button" ,
+        "action_id": "lobby_leave",
+        "text": {
+          "type": "plain_text",
+          "text": "Leave Game",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_leave`,
+      }
+    ]
+  };
 
-  constructor({channel, gameId, players, botToken}: LobbyGame) {
-    super(channel, botToken, gameId, players);
+  if (Object.keys(game.players).length >= 5) {
+    buttons.elements.push({
+      type:"button" ,
+      "action_id": "start",
+      "text": {
+        "type": "plain_text",
+        "text": "Start Game!",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_start`,
+      "style": "primary"
+    });
+  }
 
-    this.turnOrder = Object.keys(this.players);
-    shuffleArray(this.turnOrder);
-    this.numPlayers = this.turnOrder.length;
+  const blocks: KnownBlock[] = [
+    {
+      type: "section",
+      text: {
+        "type": "mrkdwn",
+        "text": `Starting a new game of Secret Dillon™.\n*Players*: ${Object.keys(game.players).map(player => name(game, player)).join(", ")}\nClick below to join!`
+      }
+    },
+    {
+      "type": "divider"
+    },
+    buttons
+  ];
+
+  if (respond) {
+    return respond({
+      blocks: blocks,
+      "replace_original": true,
+      text: ""
+    });
+  } else {
+    return await app.client.chat.postMessage({
+      token: game.botToken,
+      channel: game.channel,
+      blocks: blocks,
+      text: ""
+    }) as ChatPostMessageResult;
+  }
+}
+
+function startGame(game: LobbyGame): NominateGame {
+  const turnOrder = Object.keys(game.players);
+  shuffleArray(turnOrder);
+
+  const numPlayers = turnOrder.length as NumPlayers;
+
+  // Set Managerial powers based on the number of players
+  let managerialPowers: { [rejectCount: number]: ManagerialPower } = {};
+  if (numPlayers >= 9) {
+    managerialPowers = {
+      1: "investigate",
+      2: "investigate",
+      3: "special",
+      4: "fire",
+      5: "fire"
+    };
+  } else if (numPlayers >= 7) {
+    managerialPowers = {
+      2: "investigate",
+      3: "special",
+      4: "fire",
+      5: "fire"
+    };
+  } else if (numPlayers >= 5) {
+    managerialPowers = {
+      3: "peek",
+      4: "fire",
+      5: "fire"
+    };
+  }
+
+  // Set up deck
+  const deck: Card[] = [];
+  for (let i = 0; i < 6; i++) {
+    deck.push("accept");
+  }
+  for (let i = 0; i < 11; i++) {
+    deck.push("reject");
+  }
+  shuffleArray(deck);
+
+  // Set roles for each player
+  const playerIds = Object.keys(game.players);
+  shuffleArray(playerIds);
+  const numDillons = playerIds.length - NUM_LIBBYS[playerIds.length] - 1;
+
+  // Create the Dillon (captial D)
+  let player = playerIds.pop() as string;
+  const Dillon = player;
+  game.players[player].role = "Dillon";
+
+  // Create the dillons (lowercase d)
+  const dillons = [];
+  for (let i = 0; i < numDillons; i++) {
+    let player = playerIds.pop() as string;
+    dillons.push(player);
+    game.players[player].role = "dillon";
+  }
+
+  // Make the rest libbys
+  const libbys = [];
+  while (player = playerIds.pop() as string) {
+    libbys.push(player);
+    game.players[player].role = "libby";
+  }
+
+  return {
+    ...game,
+    turnOrder, numPlayers, managerialPowers, deck,
+    Dillon, dillons, libbys,
 
     // Start manager at first player
-    this.managerIndex = 0;
-    this.manager = this.turnOrder[0];
+    managerIndex: 0,
+    manager: turnOrder[0],
 
-    // Set Managerial powers based on the number of players
-    if (this.numPlayers >= 9) {
-      this.managerialPowers = {
-        1: "investigate",
-        2: "investigate",
-        3: "special",
-        4: "fire",
-        5: "fire"
-      };
-    } else if (this.numPlayers >= 7) {
-      this.managerialPowers = {
-        2: "investigate",
-        3: "special",
-        4: "fire",
-        5: "fire"
-      };
-    } else if (this.numPlayers >= 5) {
-      this.managerialPowers = {
-        3: "peak",
-        4: "fire",
-        5: "fire"
-      };
+    // Start on the nominate step
+    step: "nominate",
+
+    // Initialize everything else
+    ineligibleReviewers: [],
+    votes: {},
+    promotionTracker: 0,
+    discard: [],
+    hand: [],
+    accept: 0,
+    reject: 0,
+    identified: [],
+  };
+}
+
+
+
+async function sendStartMessages(game: InProgressGame) {
+  // Send a message to each player with their identity
+  for (const player in game.players) {
+    const role = game.players[player].role;
+    let message = "";
+    if (role === 'libby') {
+      message =  "You are a libby";
     } else {
-      this.managerialPowers = {};
-    }
-
-    // Set up deck
-    this.deck = [];
-    for (let i = 0; i < 6; i++) {
-      this.deck.push("accept");
-    }
-    for (let i = 0; i < 11; i++) {
-      this.deck.push("reject");
-    }
-    shuffleArray(this.deck);
-
-    // Set roles for each player
-    const playerIds = Object.keys(this.players);
-    shuffleArray(playerIds);
-    const numDillons = playerIds.length - NUM_LIBBYS[playerIds.length] - 1;
-
-    // Create the Dillon (captial D)
-    let player = playerIds.pop() as string;
-    this.Dillon = player;
-    this.players[player].role = "Dillon";
-
-    // Create the dillons (lowercase d)
-    this.dillons = [];
-    for (let i = 0; i < numDillons; i++) {
-      let player = playerIds.pop() as string;
-      this.dillons.push(player);
-      this.players[player].role = "dillon";
-    }
-
-    // Make the rest libbys
-    this.libbys = [];
-    while(player = playerIds.pop() as string) {
-      this.libbys.push(player);
-      this.players[player].role = "libby";
-    }
-
-    this.step = "nominate";
-    this.ineligibleReviewers = [];
-    this.votes = {};
-    this.promotionTracker = 0;
-    this.discard = [];
-    this.hand = [];
-    this.accept = 0;
-    this.reject = 0;
-    this.identified = [];
-  }
-
-  async sendStartMessages() {
-    // Send a message to each player with their identity
-    for (const player in this.players) {
-      const role = this.players[player].role;
-      let message = "";
-      if (role === 'libby') {
-        message =  "You are a libby";
+      if (role === 'dillon') {
+        message = "You are a dillon (lowercase d)";
+        message += `\nDillon is ${name(game, game.Dillon)}`;
       } else {
-        if (role === 'dillon') {
-          message = "You are a dillon (lowercase d)";
-          message += `\nDillon is ${this.name(this.Dillon)}`;
-        } else {
-          message = "You are Dillon (capital D)";
-        }
-
-        if (role === 'dillon' || this.numPlayers <= 6) {
-          message += `\nThe other dillons are: ${this.dillons.filter(id => id !== player).map(id => this.name(id))}`;
-        }
+        message = "You are Dillon (capital D)";
       }
 
-      await app.client.chat.postMessage({
-        token: this.botToken,
-        channel: player,
-        text: message
-      });
+      if (role === 'dillon' || game.numPlayers <= 6) {
+        message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => name(game, id))}`;
+      }
     }
 
-    await this.printMessage(":sparkles::sparkles:Starting New Game:sparkles::sparkles:");
-    await this.sendNominationForm();
+    await app.client.chat.postMessage({
+      token: game.botToken,
+      channel: player,
+      text: message
+    });
   }
 
-  async status() {
-    let text = "*State*: ";
-    if (this.step === "nominate") {
-      text += `Waiting for ${this.name(this.manager)} to nominate a code reviewer`;
-    } else if (this.step === "vote") {
-      text += `Voting on ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer!)} (Reviewer)`;
-    } else if (this.step === "review") {
-      text += `Waiting for ${this.name(this.manager)} (Manager) and ${this.name(this.reviewer!)} (Reviewer) to review the PR`;
-    } else if (this.step === "managerial") {
-      text += `Waiting for ${this.name(this.manager)} to use the managerial power.`;
-    }
+  await printMessage(game, ":sparkles::sparkles:Starting New Game:sparkles::sparkles:");
+  await sendNominationForm(game);
+}
 
-    text += `\n*Players*: ${this.turnOrder.map(player => this.name(player)).join(", ")}`;
-    text += `\n*Score*: ${this.accept} Accepted; ${this.reject} Rejected`;
-    text += "\n*Powers Remaining*: " + Object.entries(this.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ");
-    text += `\n*Cards in Deck:* ${this.deck.length}`;
-    text += `\n*Promotion Tracker*: ${this.promotionTracker}`;
-
-    const blocks = [
-      {
-        "type": "section",
-        "text": {
-          "type": "mrkdwn",
-          "text": text
-        }
-      },
-    ];
-
-    // If a status message exists, update it
-    if (this.statusMessage) {
-      return await app.client.chat.update({
-        token: this.botToken,
-        channel: this.channel,
-        ts: this.statusMessage,
-        blocks: blocks,
-        text: "game status"
-      });
-    } else { // otherwise post a new one and pin it
-      const response = await app.client.chat.postMessage({
-        token: this.botToken,
-        channel: this.channel,
-        blocks: blocks,
-        text: "game status"
-      }) as ChatPostMessageResult;
-      this.statusMessage = response.ts;
-      await this.pinMessage(this.statusMessage);
-      return response;
-    }
+async function status(game: InProgressGame) {
+  let text = "*State*: ";
+  if (game.step === "nominate") {
+    text += `Waiting for ${name(game, game.manager)} to nominate a code reviewer`;
+  } else if (game.step === "vote") {
+    text += `Voting on ${name(game, game.manager)} (Manager) and ${name(game, game.reviewer!)} (Reviewer)`;
+  } else if (game.step === "review") {
+    text += `Waiting for ${name(game, game.manager)} (Manager) and ${name(game, game.reviewer!)} (Reviewer) to review the PR`;
+  } else if (game.step === "managerial") {
+    text += `Waiting for ${name(game, game.manager)} to use the managerial power.`;
   }
 
-  async printMessage(message: string | KnownBlock[], channel?: string) {
-    const payload: ChatPostMessageArguments = {
-      token: this.botToken,
-      channel: channel ? channel : this.channel,
-      blocks: Array.isArray(message) ? message : undefined,
-      text: Array.isArray(message) ? "" : message
-    };
+  text += `\n*Players*: ${game.turnOrder.map(player => name(game, player)).join(", ")}`;
+  text += `\n*Score*: ${game.accept} Accepted; ${game.reject} Rejected`;
+  text += "\n*Powers Remaining*: " + Object.entries(game.managerialPowers).map(([i, power]) => `(${i}) ${POWERS[power]}`).join(", ");
+  text += `\n*Cards in Deck:* ${game.deck.length}`;
+  text += `\n*Promotion Tracker*: ${game.promotionTracker}`;
 
-    await app.client.chat.postMessage(payload);
-    await this.status();
-  }
-
-  async nominate(player: string) {
-    this.reviewer = player;
-    this.step = "vote";
-    await this.printMessage(`${this.name(this.manager)} nominated ${this.name(this.reviewer)}.`);
-    await this.showBallot();
-  }
-
-  async showBallot() {
-    const blocks: KnownBlock[] = [];
-
-    let text = "";
-    text += "\n*Manager Candidate*: " + this.name(this.manager);
-    text += "\n*Reviewer Candidate*: " + this.name(this.reviewer!);
-    text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
-    text += "\n*Votes*: " + Object.keys(this.votes).length + "/" + this.turnOrder.length;
-    text += "\n*Players that haven't voted*:" + Object.keys(this.players).filter(player => !(player in this.votes)).map(player => this.name(player)).join(", ");
-
-    blocks.push({
+  const blocks = [
+    {
       "type": "section",
       "text": {
         "type": "mrkdwn",
         "text": text
       }
+    },
+  ];
+
+  // If a status message exists, update it
+  if (game.statusMessage) {
+    return await app.client.chat.update({
+      token: game.botToken,
+      channel: game.channel,
+      ts: game.statusMessage,
+      blocks: blocks,
+      text: "game status"
     });
-
-    blocks.push({
-      "type": "divider"
-    });
-
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type:"button" ,
-          "action_id": "vote_ja",
-          "text": {
-            "type": "plain_text",
-            "text": "Ja!",
-            "emoji": true
-          },
-          "value": `${this.channel}_${this.gameId}_ja`,
-          "style": "primary"
-        },
-        {
-          type:"button" ,
-          "action_id": "vote_nein",
-          "text": {
-            "type": "plain_text",
-            "text": "Nein!",
-            "emoji": true
-          },
-          "value": `${this.channel}_${this.gameId}_nein`,
-          "style": "danger"
-        },
-        {
-          type:"button" ,
-          "action_id": "vote_withdraw",
-          "text": {
-            "type": "plain_text",
-            "text": "Withdraw vote",
-            "emoji": true
-          },
-          "value": `${this.channel}_${this.gameId}_withdraw`
-        }
-      ]
-    });
-
-    if (this.pinnedMessage) {
-      await app.client.chat.update({
-        token: this.botToken,
-        channel: this.channel,
-        blocks: blocks,
-        ts: this.pinnedMessage,
-        text: "ballot"
-      });
-    } else {
-      const response = await app.client.chat.postMessage({
-        token: this.botToken,
-        channel: this.channel,
-        blocks: blocks,
-        text: "ballot"
-      }) as ChatPostMessageResult;
-      this.pinnedMessage = response.ts;
-      await this.pinMessage(this.pinnedMessage);
-    }
-  }
-
-  rotateManager() {
-    this.managerIndex = (this.managerIndex + 1) % this.turnOrder.length;
-    this.manager = this.turnOrder[this.managerIndex];
-    this.step = "nominate";
-    this.reviewer = undefined;
-  }
-
-  nextRound() {
-    this.rotateManager();
-    this.promotionTracker = 0;
-  }
-
-  async startNextRound() {
-    this.nextRound();
-    await this.sendNominationForm();
-    await this.status();
-  }
-
-  async sendForm(
-    type: "nominate" | "investigate" | "special" | "fire",
-    groupText: string, privateText: string, eligiblePlayers: string[]
-  ) {
-    await this.printMessage(groupText);
-
-    // Send the manager a form
-    await app.client.chat.postMessage({
-      token: this.botToken,
-      channel: this.manager,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            "type": "mrkdwn",
-            "text": privateText
-          }
-        },
-        {
-          "type": "divider"
-        },
-        {
-          type: "actions",
-
-          elements: eligiblePlayers.map((player) => {
-            return {
-              type: "button",
-              "action_id": `${type}_${player}`,
-              text: {
-                type: "plain_text",
-                text: this.name(player)
-              },
-              "value": `${this.channel}_${this.gameId}_${player}`
-            };
-          })
-        }
-      ],
-      text: "dm form"
-    });
-  }
-
-  async sendNominationForm() {
-    const eligiblePlayers = this.turnOrder.filter(player => (this.ineligibleReviewers.indexOf(player) === -1) && (player !== this.manager));
-    const groupText = `Waiting for ${this.name(this.manager)} to nominate a player for reviewer.`;
-    const privateText = "Pick a player to nominate for promotion to reviewer.";
-
-    await this.sendForm('nominate', groupText, privateText, eligiblePlayers);
-  }
-
-  async sendInvestigateForm() {
-    const eligiblePlayers = this.turnOrder.filter(player => (this.identified.indexOf(player) === -1) && (player !== this.manager));
-    const groupText = `Waiting for ${this.name(this.manager)} to investigate a player.`;
-    const privateText = `Pick a player to investigate:`;
-
-    await this.sendForm('investigate', groupText, privateText, eligiblePlayers);
-  }
-
-  async sendSpecialForm() {
-    const eligiblePlayers = this.turnOrder.filter(player => player !== this.manager);
-    const groupText = `Waiting for ${this.name(this.manager)} to nominate a player for a special promotion to manager.`;
-    const privateText = `Pick a player to nominate for special promotion to manager:`;
-
-    await this.sendForm('special', groupText, privateText, eligiblePlayers);
-  }
-
-  async sendFireForm() {
-    const eligiblePlayers = this.turnOrder.filter(player => player !== this.manager);
-    const groupText = `Waiting for ${this.name(this.manager)} to fire a player.`;
-    const privateText = `Pick a player to fire:`;
-
-    await this.sendForm('fire', groupText, privateText, eligiblePlayers);
-  }
-
-  async vote(user: string, vote: "ja" | "nein" | "withdraw", respond: RespondFn) {
-    // Make sure user is in game
-    if (!(user in this.players)) {
-      return;
-    }
-
-    if (vote === "withdraw") {
-      delete this.votes[user];
-    } else {
-      this.votes[user] = vote;
-    }
-
-    // If everyone has voted
-    if (Object.keys(this.votes).length === this.turnOrder.length) {
-      await this.unpinPinnedMessage();
-      respond({"delete_original": true, text: "rm ballot"});
-      await this.tallyVotes();
-    } else {
-      await this.showBallot();
-    }
-    await this.status();
-  }
-
-  async tallyVotes() {
-    const votes: {ja: string[], nein: string[]} = {ja: [], nein: []};
-    for (const player in this.votes) {
-      votes[this.votes[player]].push(this.name(player));
-    }
-
-    // Print voting results
-    await this.printMessage(`*Voting Results*:\n*Ja*: ${votes.ja.join(", ")}\n*Nein*: ${votes.nein.join(", ")}`);
-
-    // Clear votes
-    this.votes = {};
-
-    // Check results
-    if (votes.ja.length > votes.nein.length) { // Majority voted ja
-      await this.voteSuccess();
-    } else {
-      await this.voteFailure();
-    }
-  }
-
-  async voteSuccess() {
-    // Check if the game is over due to Dillon being promoted
-    if (this.checkGameOver(this.step)) {
-      return;
-    }
-
-    // If three or more rejects have been played, report that the current reviewer is not Dillon
-    if (this.reject >= 3) {
-      this.printMessage(`${this.name(this.reviewer!)} is not Dillon!`);
-    }
-
-    // Set the next ineligible reviewers
-    if (this.turnOrder.length <= 5) {
-      this.ineligibleReviewers = [this.reviewer!];
-    } else {
-      this.ineligibleReviewers = [this.manager, this.reviewer!];
-    }
-
-    // Move to the legislative step
-    this.step = "review";
-    await this.sendManagerCards();
-  }
-
-  async voteFailure() {
-    const finishedTurn = await this.incrementPromotionTracker();
-    if (!finishedTurn) {
-      this.rotateManager();
-      await this.sendNominationForm();
-    }
-  }
-
-  async incrementPromotionTracker() {
-    // Advance election tracker and check if === 3
-    this.promotionTracker++;
-    if (this.promotionTracker >= 3) {
-      const randomResult = this.deck.pop() as Card;
-      this[randomResult]++;
-
-      // Check if over because of the result
-      if (!this.checkGameOver()) {
-        await this.startNextRound();
-      }
-
-      return true;
-    }
-    return false;
-  }
-
-  checkGameOver(step?: GameStep) {
-    let gameOver = false;
-    let message = "";
-    if (this.accept >= 5) { // libbys win from 5 accepted PRs
-      gameOver = true;
-      message = ":orange: libbys win! :orange:";
-    } else if (this.reject >= 6) { // dillons win from 6 rejected PRs
-      gameOver = true;
-      message = ":nollid: dillons win! :dillon:";
-    } else if (step && (step === 'vote') && (this.reject >= 3) && (this.players[this.reviewer!].role === 'Dillon')) {
-      // dillons win because Dillon promoted to reviewer after 3 rejected PRs
-      gameOver = true;
-      message = `${this.name(this.Dillon)} was Dillon and became code reviewer!\n:nollid: dillons win! :dillon:`;
-    } else if (this.players[this.Dillon].state === "fired") { // libbys win because they fired Dillon
-      gameOver = true;
-      message = `${this.name(this.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
-    }
-
-    if (gameOver) {
-      //delete GAMES[game.channel];
-      this.step = "over";
-      this.printMessage(message);
-    }
-
-    return gameOver;
-  }
-
-  async sendCards(playerId: string, instructions: string, includeVeto=true) {
-    const buttons: ActionsBlock['elements'] = this.hand.map((card, index) => {
-      return {
-        type:"button" ,
-        "action_id": "selectCard_" + index,
-        "text": {
-          "type": "plain_text",
-          "text": card === "reject" ? "Reject PR" : "Accept PR",
-          "emoji": true
-        },
-        "value": `${this.channel}_${this.gameId}_${index}`,
-        "style": card === "reject" ? "danger" : "primary"
-      };
-    });
-
-    // Check if veto power is active, if so, include a "Veto" button for the reviewer
-    if (includeVeto && (this.reject >= 5) && (buttons.length === 2)) {
-      buttons.push({
-        type:"button" ,
-        "action_id": "veto",
-        "text": {
-          "type": "plain_text",
-          "text": "Veto",
-          "emoji": true
-        },
-        "value": `${this.channel}_${this.gameId}_veto`
-      });
-    }
-
-    app.client.chat.postMessage({
-      token: this.botToken,
-      channel: playerId,
-      text: instructions,
-      blocks: [
-        {
-          type: "section",
-          text: {
-            "type": "mrkdwn",
-            "text": instructions
-          }
-        },
-        {
-          type: "actions",
-          elements: buttons
-        }
-      ]
-    });
-  }
-
-  async sendManagerCards() {
-    this.hand = this.deck.splice(this.deck.length - 3, 3);
-
-    await this.sendCards(this.manager, `Choose a card to *discard*. The other two will be passed to ${this.name(this.reviewer!)}.`);
-    await this.printMessage(`${this.name(this.manager)} drew 3 cards.`);
-  }
-
-  async vetoResponse(choice: "ja" | "nein") {
-    if (choice === "ja") {
-      // If yes, discard the cards
-      this.discard.push(this.hand.pop()!);
-      this.discard.push(this.hand.pop()!);
-
-      // If this pushed the promotionTracker to 3, end this turn
-      const finishedTurn = await this.incrementPromotionTracker();
-      if (finishedTurn) {
-        return;
-      }
-
-      // Shuffle if needed
-      if (this.deck.length < 3) {
-        this.deck = this.deck.concat(this.discard);
-        shuffleArray(this.deck);
-      }
-
-      // Send new cards to manager
-      await this.sendManagerCards();
-
-      await this.printMessage(`*${this.name(this.reviewer!)} and ${this.name(this.manager)} vetoed the PR.*`);
-    } else {
-      await this.sendCards(this.reviewer!, `${this.name(this.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, false);
-      await this.printMessage(`${this.name(this.reviewer!)} suggested a veto but ${this.name(this.manager)} *rejected* it. Waiting for ${this.name(this.reviewer!)} to play a card.`);
-    }
-  }
-
-  async selectCard(indexString: string) {
-    const index = parseInt(indexString);
-    // If there are currently 3 cards, it was the manager's pick
-    if (this.hand.length === 3) {
-      this.discard.push(...this.hand.splice(index, 1));
-      await this.sendCards(this.reviewer!, "Choose a card to *play*. The other card will be discarded.");
-      await this.printMessage(`${this.name(this.manager)} passed 2 cards to ${this.name(this.reviewer!)}.`);
-    } else { // Otherwise, it was the reviewer picking the card to play
-      // Increment the chosen counter
-      const chosen = this.hand.splice(index, 1)[0];
-      this[chosen]++;
-
-      await this.printMessage(`${this.name(this.reviewer!)} played ${chosen}.`);
-
-      // Put the other card into discard
-      this.discard.push(this.hand.pop()!);
-
-      // If the deck has fewer than 3 cards left, shuffle deck and discard together
-      if (this.deck.length < 3) {
-        this.deck = this.deck.concat(this.discard);
-        shuffleArray(this.deck);
-      }
-
-      // Check if the game is over
-      if (this.checkGameOver()) {
-        return;
-      }
-
-      // Move to the executive step
-      if (chosen === 'accept' || this.managerialPowers[this.reject] === undefined) {
-        await this.startNextRound();
-      } else {
-        await this.managerialStep();
-      }
-    }
-  }
-
-  async managerialStep() {
-    const power = this.managerialPowers[this.reject];
-    delete this.managerialPowers[this.reject];
-    this.step = "managerial";
-
-    if (power === "investigate") {
-      await this.sendInvestigateForm();
-    } else if (power === "special") {
-      await this.sendSpecialForm();
-    } else if (power === "peak") {
-      await this.peek();
-    } else if (power === "fire") {
-      await this.sendFireForm();
-    }
-
-    return true;
-  }
-
-  async peek() {
-    await this.printMessage(
-      `The top 3 cards of the deck are \n-${this.deck.slice(this.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
-      this.manager
-    );
-    await this.printMessage(`Showing ${this.name(this.manager)} the top three cards of the PR deck.`);
-
-    await this.startNextRound();
-  }
-
-  async investigate(player: string) {
-    if (this.players[player]) {
-      await this.printMessage(
-        `${this.name(player)} is a ${this.players[player].role.toLowerCase()}.`,
-        this.manager
-      );
-    }
-    await this.printMessage(`${this.name(this.manager)} investigated ${this.name(player)}.`);
-
-    await this.startNextRound();
-  }
-
-  async specialPromotion(player: string) {
-    // Start the next round with the special manager and without rotating the manager index
-    this.manager = player;
-    this.step = "nominate";
-    this.reviewer = undefined;
-    this.promotionTracker = 0;
-    await this.printMessage(
-      `${this.name(this.manager)} nominated ${this.name(player)} to go up for special promotion to manager.`
-    );
-    await this.sendNominationForm();
-  }
-
-  async fire(player: string,) {
-    await this.printMessage(`☠️ ${this.name(this.manager)} fired ${this.name(player)}. ☠️`);
-
-    this.players[player].state = "fired";
-    this.turnOrder.splice(this.turnOrder.indexOf(player), 1);
-    if (!this.checkGameOver()) {
-      this.startNextRound();
-    }
+  } else { // otherwise post a new one and pin it
+    const response = await app.client.chat.postMessage({
+      token: game.botToken,
+      channel: game.channel,
+      blocks: blocks,
+      text: "game status"
+    }) as ChatPostMessageResult;
+    game.statusMessage = response.ts;
+    await pinMessage(game, game.statusMessage);
+    return response;
   }
 }
 
-async function newGame(channel_id: string, botToken: string) {
-  const game = new LobbyGame(channel_id, botToken);
-  GAMES[channel_id] = game;
-  await game.createLobby();
+async function printMessage(game: InProgressGame, message: string | KnownBlock[], channel?: string) {
+  const payload: ChatPostMessageArguments = {
+    token: game.botToken,
+    channel: channel ? channel : game.channel,
+    blocks: Array.isArray(message) ? message : undefined,
+    text: Array.isArray(message) ? "" : message
+  };
+
+  await app.client.chat.postMessage(payload);
+  await status(game);
 }
 
-app.action("new_game", async ({body, ack, respond, context}) => {
-  ack();
-  respond({"delete_original": true, text: ""});
-  await newGame(body.channel.id, context.botToken);
-});
+async function nominate(game: InProgressGame, player: string) {
+  game.reviewer = player;
+  game.step = "vote";
+  await printMessage(game, `${name(game, game.manager)} nominated ${name(game, game.reviewer)}.`);
+  await showBallot(game as PostNominateGame);
+}
 
-app.action(/^nominate_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  context.game.nominate(context.value, context);
-});
+async function showBallot(game: PostNominateGame) {
+  const blocks: KnownBlock[] = [];
 
-app.action(/^vote_.*$/, actionMiddleware, async({body, ack, respond, context}) => {
-  await context.game.vote(body.user.id, context.value, context, respond);
-  context.game.checkGameOver();
-});
+  let text = "";
+  text += "\n*Manager Candidate*: " + name(game, game.manager);
+  text += "\n*Reviewer Candidate*: " + name(game, game.reviewer!);
+  text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
+  text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
+  text += "\n*Players that haven't voted*:" + Object.keys(game.players).filter(player => !(player in game.votes)).map(player => name(game, player)).join(", ");
 
-app.action("veto", actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  const game = context.game;
-  const text = `${game.name(game.reviewer)} would like to veto this PR. Do you agree?`;
+  blocks.push({
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": text
+    }
+  });
 
-  // Send a message to the manager asking whether they'd like to veto
+  blocks.push({
+    "type": "divider"
+  });
+
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type:"button" ,
+        "action_id": "vote_ja",
+        "text": {
+          "type": "plain_text",
+          "text": "Ja!",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_ja`,
+        "style": "primary"
+      },
+      {
+        type:"button" ,
+        "action_id": "vote_nein",
+        "text": {
+          "type": "plain_text",
+          "text": "Nein!",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_nein`,
+        "style": "danger"
+      },
+      {
+        type:"button" ,
+        "action_id": "vote_withdraw",
+        "text": {
+          "type": "plain_text",
+          "text": "Withdraw vote",
+          "emoji": true
+        },
+        "value": `${game.channel}_${game.gameId}_withdraw`
+      }
+    ]
+  });
+
+  if (game.pinnedMessage) {
+    await app.client.chat.update({
+      token: game.botToken,
+      channel: game.channel,
+      blocks: blocks,
+      ts: game.pinnedMessage,
+      text: "ballot"
+    });
+  } else {
+    const response = await app.client.chat.postMessage({
+      token: game.botToken,
+      channel: game.channel,
+      blocks: blocks,
+      text: "ballot"
+    }) as ChatPostMessageResult;
+    game.pinnedMessage = response.ts;
+    await pinMessage(game, game.pinnedMessage);
+  }
+}
+
+function rotateManager(game: InProgressGame) {
+  game.managerIndex = (game.managerIndex + 1) % game.turnOrder.length;
+  game.manager = game.turnOrder[game.managerIndex];
+  game.step = "nominate";
+  game.reviewer = undefined;
+}
+
+function nextRound(game: InProgressGame) {
+  rotateManager(game);
+  game.promotionTracker = 0;
+}
+
+async function startNextRound(game: InProgressGame) {
+  nextRound(game);
+  await sendNominationForm(game);
+  await status(game);
+}
+
+async function sendForm(
+  game: InProgressGame,
+  type: "nominate" | "investigate" | "special" | "fire",
+  groupText: string, privateText: string, eligiblePlayers: string[]
+) {
+  await printMessage(game, groupText);
+
+  // Send the manager a form
   await app.client.chat.postMessage({
-    token: context.botToken,
+    token: game.botToken,
     channel: game.manager,
-    text: text,
     blocks: [
       {
         type: "section",
         text: {
           "type": "mrkdwn",
-          "text": text
+          "text": privateText
+        }
+      },
+      {
+        "type": "divider"
+      },
+      {
+        type: "actions",
+
+        elements: eligiblePlayers.map((player) => {
+          return {
+            type: "button",
+            "action_id": `${type}_${player}`,
+            text: {
+              type: "plain_text",
+              text: name(game, player)
+            },
+            "value": `${game.channel}_${game.gameId}_${player}`
+          };
+        })
+      }
+    ],
+    text: "dm form"
+  });
+}
+
+async function sendNominationForm(game: InProgressGame) {
+  const eligiblePlayers = game.turnOrder.filter(player => (game.ineligibleReviewers.indexOf(player) === -1) && (player !== game.manager));
+  const groupText = `Waiting for ${name(game, game.manager)} to nominate a player for reviewer.`;
+  const privateText = "Pick a player to nominate for promotion to reviewer.";
+
+  await sendForm(game, 'nominate', groupText, privateText, eligiblePlayers);
+}
+
+async function sendInvestigateForm(game: InProgressGame) {
+  const eligiblePlayers = game.turnOrder.filter(player => (game.identified.indexOf(player) === -1) && (player !== game.manager));
+  const groupText = `Waiting for ${name(game, game.manager)} to investigate a player.`;
+  const privateText = `Pick a player to investigate:`;
+
+  await sendForm(game, 'investigate', groupText, privateText, eligiblePlayers);
+}
+
+async function sendSpecialForm(game: InProgressGame) {
+  const eligiblePlayers = game.turnOrder.filter(player => player !== game.manager);
+  const groupText = `Waiting for ${name(game, game.manager)} to nominate a player for a special promotion to manager.`;
+  const privateText = `Pick a player to nominate for special promotion to manager:`;
+
+  await sendForm(game, 'special', groupText, privateText, eligiblePlayers);
+}
+
+async function sendFireForm(game: InProgressGame) {
+  const eligiblePlayers = game.turnOrder.filter(player => player !== game.manager);
+  const groupText = `Waiting for ${name(game, game.manager)} to fire a player.`;
+  const privateText = `Pick a player to fire:`;
+
+  await sendForm(game, 'fire', groupText, privateText, eligiblePlayers);
+}
+
+async function vote(game: PostNominateGame, user: string, vote: "ja" | "nein" | "withdraw", respond: RespondFn) {
+  // Make sure user is in game
+  if (!(user in game.players)) {
+    return;
+  }
+
+  if (vote === "withdraw") {
+    delete game.votes[user];
+  } else {
+    game.votes[user] = vote;
+  }
+
+  // If everyone has voted
+  if (Object.keys(game.votes).length === game.turnOrder.length) {
+    await unpinPinnedMessage(game);
+    respond({"delete_original": true, text: "rm ballot"});
+    await tallyVotes(game);
+  } else {
+    await showBallot(game);
+  }
+  await status(game);
+}
+
+async function tallyVotes(game: InProgressGame) {
+  const votes: {ja: string[], nein: string[]} = {ja: [], nein: []};
+  for (const player in game.votes) {
+    votes[game.votes[player]].push(name(game, player));
+  }
+
+  // Print voting results
+  await printMessage(game, `*Voting Results*:\n*Ja*: ${votes.ja.join(", ")}\n*Nein*: ${votes.nein.join(", ")}`);
+
+  // Clear votes
+  game.votes = {};
+
+  // Check results
+  if (votes.ja.length > votes.nein.length) { // Majority voted ja
+    await voteSuccess(game);
+  } else {
+    await voteFailure(game);
+  }
+}
+
+async function voteSuccess(game: InProgressGame) {
+  // Check if the game is over due to Dillon being promoted
+  if (checkGameOver(game, game.step)) {
+    return;
+  }
+
+  // If three or more rejects have been played, report that the current reviewer is not Dillon
+  if (game.reject >= 3) {
+    printMessage(game, `${name(game, game.reviewer!)} is not Dillon!`);
+  }
+
+  // Set the next ineligible reviewers
+  if (game.turnOrder.length <= 5) {
+    game.ineligibleReviewers = [game.reviewer!];
+  } else {
+    game.ineligibleReviewers = [game.manager, game.reviewer!];
+  }
+
+  // Move to the legislative step
+  game.step = "review";
+  await sendManagerCards(game);
+}
+
+async function voteFailure(game: InProgressGame) {
+  const finishedTurn = await incrementPromotionTracker(game);
+  if (!finishedTurn) {
+    rotateManager(game);
+    await sendNominationForm(game);
+  }
+}
+
+async function incrementPromotionTracker(game: InProgressGame) {
+  // Advance election tracker and check if === 3
+  game.promotionTracker++;
+  if (game.promotionTracker >= 3) {
+    const randomResult = game.deck.pop() as Card;
+    game[randomResult]++;
+
+    // Check if over because of the result
+    if (!(await checkGameOver(game))) {
+      await startNextRound(game);
+    }
+
+    return true;
+  }
+  return false;
+}
+
+async function checkGameOver(game: InProgressGame, step?: GameStep): Promise<boolean> {
+  let gameOver = false;
+  let message = "";
+  if (game.accept >= 5) { // libbys win from 5 accepted PRs
+    gameOver = true;
+    message = ":orange: libbys win! :orange:";
+  } else if (game.reject >= 6) { // dillons win from 6 rejected PRs
+    gameOver = true;
+    message = ":nollid: dillons win! :dillon:";
+  } else if (step && (step === 'vote') && (game.reject >= 3) && (game.players[game.reviewer!].role === 'Dillon')) {
+    // dillons win because Dillon promoted to reviewer after 3 rejected PRs
+    gameOver = true;
+    message = `${name(game, game.Dillon)} was Dillon and became code reviewer!\n:nollid: dillons win! :dillon:`;
+  } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
+    gameOver = true;
+    message = `${name(game, game.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
+  }
+
+  if (gameOver) {
+    //TODO When saving game, don't save if the step === "over"
+    //delete GAMES[game.channel];
+    game.step = "over";
+    await printMessage(game, message);
+  }
+
+  return gameOver;
+}
+
+async function sendCards(game: InProgressGame, playerId: string, instructions: string, includeVeto=true) {
+  const buttons: ActionsBlock['elements'] = game.hand.map((card, index) => {
+    return {
+      type:"button" ,
+      "action_id": "selectCard_" + index,
+      "text": {
+        "type": "plain_text",
+        "text": card === "reject" ? "Reject PR" : "Accept PR",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_${index}`,
+      "style": card === "reject" ? "danger" : "primary"
+    };
+  });
+
+  // Check if veto power is active, if so, include a "Veto" button for the reviewer
+  if (includeVeto && (game.reject >= 5) && (buttons.length === 2)) {
+    buttons.push({
+      type:"button" ,
+      "action_id": "veto",
+      "text": {
+        "type": "plain_text",
+        "text": "Veto",
+        "emoji": true
+      },
+      "value": `${game.channel}_${game.gameId}_veto`
+    });
+  }
+
+  app.client.chat.postMessage({
+    token: game.botToken,
+    channel: playerId,
+    text: instructions,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          "type": "mrkdwn",
+          "text": instructions
         }
       },
       {
         type: "actions",
-        elements: [
-          {
-            type:"button" ,
-            "action_id": "veto_ja",
-            "text": {
-              "type": "plain_text",
-              "text": "Ja!",
-              "emoji": true
-            },
-            "value": `${game.channel}_${game.gameId}_ja`,
-            "style": "primary"
-          },
-          {
-            type:"button" ,
-            "action_id": "veto_nein",
-            "text": {
-              "type": "plain_text",
-              "text": "Nein!",
-              "emoji": true
-            },
-            "value": `${game.channel}_${game.gameId}_nein`,
-            "style": "danger"
-          }
-        ]
+        elements: buttons
       }
     ]
   });
-});
+}
 
-app.action(/^veto_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  await context.game.vetoResponse(context.value);
-  checkGameOver(context.game);
-});
+async function sendManagerCards(game: InProgressGame) {
+  game.hand = game.deck.splice(game.deck.length - 3, 3);
 
-app.action(/^selectCard_\d$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  await context.game.selectCard(context.value);
-  checkGameOver(context.game);
-});
+  await sendCards(game, game.manager, `Choose a card to *discard*. The other two will be passed to ${name(game, game.reviewer!)}.`);
+  await printMessage(game, `${name(game, game.manager)} drew 3 cards.`);
+}
 
-app.action(/^investigate_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  await context.game.investigate(context.value);
-});
+async function vetoResponse(game: InProgressGame, choice: "ja" | "nein") {
+  if (choice === "ja") {
+    // If yes, discard the cards
+    game.discard.push(game.hand.pop()!);
+    game.discard.push(game.hand.pop()!);
 
-app.action(/^special_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  await context.game.specialPromotion(context.value, context);
-});
-
-app.action(/^fire_.*$/, actionMiddleware, async ({body, ack, respond, context}) => {
-  await respond({"delete_original": true, text: ""});
-  await context.game.fire(context.value, context);
-  context.game.checkGameOver();
-});
-
-const lobbyAction: ActionHandler = async ({body, respond, context}) => {
-  const game = context.game;
-  const user = body.user.id;
-  const choice = context.value;
-
-  if (choice === "join") {
-    if (Object.keys(game.players).length < 10) {
-      const userInfo = await app.client.users.info({
-        token: context.botToken,
-        user: user,
-      });
-
-      game.addPlayer(user, userInfo);
+    // If this pushed the promotionTracker to 3, end this turn
+    const finishedTurn = await incrementPromotionTracker(game);
+    if (finishedTurn) {
+      return;
     }
+
+    // Shuffle if needed
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+
+    // Send new cards to manager
+    await sendManagerCards(game);
+
+    await printMessage(game, `*${name(game, game.reviewer!)} and ${name(game, game.manager)} vetoed the PR.*`);
   } else {
-    game.removePlayer(user);
+    await sendCards(game, game.reviewer!, `${name(game, game.manager)} has *rejected* the veto.\nChoose a card to *play*. The other card will be discarded.`, false);
+    await printMessage(game, `${name(game, game.reviewer!)} suggested a veto but ${name(game, game.manager)} *rejected* it. Waiting for ${name(game, game.reviewer!)} to play a card.`);
+  }
+}
+
+async function selectCard(game: InProgressGame, indexString: string) {
+  const index = parseInt(indexString);
+  // If there are currently 3 cards, it was the manager's pick
+  if (game.hand.length === 3) {
+    game.discard.push(...game.hand.splice(index, 1));
+    await sendCards(game, game.reviewer!, "Choose a card to *play*. The other card will be discarded.");
+    await printMessage(game, `${name(game, game.manager)} passed 2 cards to ${name(game, game.reviewer!)}.`);
+  } else { // Otherwise, it was the reviewer picking the card to play
+    // Increment the chosen counter
+    const chosen = game.hand.splice(index, 1)[0];
+    game[chosen]++;
+
+    await printMessage(game, `${name(game, game.reviewer!)} played ${chosen}.`);
+
+    // Put the other card into discard
+    game.discard.push(game.hand.pop()!);
+
+    // If the deck has fewer than 3 cards left, shuffle deck and discard together
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+
+    // Check if the game is over
+    if (await checkGameOver(game)) {
+      return;
+    }
+
+    // Move to the executive step
+    if (chosen === 'accept' || game.managerialPowers[game.reject] === undefined) {
+      await startNextRound(game);
+    } else {
+      await managerialStep(game);
+    }
+  }
+}
+
+async function managerialStep(game: InProgressGame) {
+  const power = game.managerialPowers[game.reject];
+  delete game.managerialPowers[game.reject];
+  game.step = "managerial";
+
+  if (power === "investigate") {
+    await sendInvestigateForm(game);
+  } else if (power === "special") {
+    await sendSpecialForm(game);
+  } else if (power === "peek") {
+    await peek(game);
+  } else if (power === "fire") {
+    await sendFireForm(game);
   }
 
-  game.postLobby(respond);
-};
+  return true;
+}
 
-app.action(/^lobby_.*$/, actionMiddleware, lobbyAction);
+async function peek(game: InProgressGame) {
+  await printMessage(game,
+    `The top 3 cards of the deck are \n-${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
+    game.manager
+  );
+  await printMessage(game, `Showing ${name(game, game.manager)} the top three cards of the PR deck.`);
 
-app.action(/start/, actionMiddleware, async ({body, ack, respond, context}) => {
-  const game = context.game;
-  await game.unpinPinnedMessage(context);
-  await respond({"delete_original": true, text: ""});
-  game.start(context);
-});
+  await startNextRound(game);
+}
+
+async function investigate(game: InProgressGame, player: string) {
+  if (game.players[player]) {
+    await printMessage(game,
+      `${name(game, player)} is a ${game.players[player].role.toLowerCase()}.`,
+      game.manager
+    );
+  }
+  await printMessage(game, `${name(game, game.manager)} investigated ${name(game, player)}.`);
+
+  await startNextRound(game);
+}
+
+async function specialPromotion(game: InProgressGame, player: string) {
+  // Start the next round with the special manager and without rotating the manager index
+  game.manager = player;
+  game.step = "nominate";
+  game.reviewer = undefined;
+  game.promotionTracker = 0;
+  await printMessage(game,
+    `${name(game, game.manager)} nominated ${name(game, player)} to go up for special promotion to manager.`
+  );
+  await sendNominationForm(game);
+}
+
+async function fire(game: InProgressGame, player: string) {
+  await printMessage(game, `☠️ ${name(game, game.manager)} fired ${name(game, player)}. ☠️`);
+
+  game.players[player].state = "fired";
+  game.turnOrder.splice(game.turnOrder.indexOf(player), 1);
+  if (!(await checkGameOver(game))) {
+    startNextRound(game);
+  }
+}
 
 
-app.message(/^new$/, async ({message, context, say}) => {
-  if (message.channel in GAMES) {
+
+
+
+app.message(/^new$/, async ({ message, context, say }) => {
+  // TODO: try to Load game
+  const game = await loadGame(message.channel);
+  if (game) {
     const text = "A game is already in progress - are you sure you want to end the current game and start a new one?";
     app.client.chat.postEphemeral({
       token: context.botToken,
@@ -1106,9 +961,167 @@ app.message(/^new$/, async ({message, context, say}) => {
     // sendSpecialForm(game, context);
     // peak(game, context);
     // sendFireForm(game, context);
-    await newGame(message.channel, context.botToken);
+    const game = await newGame(message.channel, context.botToken);
+    await saveGame(game);
   }
 });
+
+app.action("new_game", async ({ body, ack, respond, context }) => {
+  ack();
+  respond({ "delete_original": true, text: "" });
+  const game = await newGame(body.channel!.id, context.botToken);
+  await saveGame(game);
+});
+
+app.action(/start/, actionMiddleware, async ({ respond, context }) => {
+  const lobby = context.game;
+  if (lobby.step === "lobby") {
+    await unpinPinnedMessage(lobby);
+    respond({ "delete_original": true, text: "" });
+    const game = startGame(lobby);
+    await sendStartMessages(game);
+    await saveGame(game);
+  }
+});
+
+app.action(/^nominate_.*$/, actionMiddleware, async({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "nominate") {
+    nominate(context.game, context.value);
+    await saveGame(context.game);
+  }
+});
+
+app.action(/^vote_.*$/, actionMiddleware, async({body, respond, context}) => {
+  if (context.game.step === "vote") {
+    await vote(context.game, body.user.id, context.value as Vote | "withdraw", respond);
+    await checkGameOver(context.game);
+    await saveGame(context.game);
+  }
+});
+
+app.action("veto", actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  const game = context.game;
+  if (game.step === "review") {
+    const text = `${name(game, game.reviewer)} would like to veto this PR. Do you agree?`;
+
+    // Send a message to the manager asking whether they'd like to veto
+    await app.client.chat.postMessage({
+      token: context.botToken,
+      channel: game.manager,
+      text: text,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            "type": "mrkdwn",
+            "text": text
+          }
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type:"button" ,
+              "action_id": "veto_ja",
+              "text": {
+                "type": "plain_text",
+                "text": "Ja!",
+                "emoji": true
+              },
+              "value": `${game.channel}_${game.gameId}_ja`,
+              "style": "primary"
+            },
+            {
+              type:"button" ,
+              "action_id": "veto_nein",
+              "text": {
+                "type": "plain_text",
+                "text": "Nein!",
+                "emoji": true
+              },
+              "value": `${game.channel}_${game.gameId}_nein`,
+              "style": "danger"
+            }
+          ]
+        }
+      ]
+    });
+  }
+});
+
+app.action(/^veto_.*$/, actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "review") {
+    await vetoResponse(context.game, context.value as Vote);
+    await checkGameOver(context.game);
+    await saveGame(context.game);
+  }
+});
+
+app.action(/^selectCard_\d$/, actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "review") {
+    await selectCard(context.game, context.value);
+    await checkGameOver(context.game);
+    await saveGame(context.game);
+  }
+});
+
+app.action(/^investigate_.*$/, actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "managerial") {
+    await investigate(context.game, context.value);
+    await saveGame(context.game);
+  }
+});
+
+app.action(/^special_.*$/, actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "managerial") {
+    await specialPromotion(context.game, context.value);
+    await saveGame(context.game);
+  }
+});
+
+app.action(/^fire_.*$/, actionMiddleware, async ({respond, context}) => {
+  respond({"delete_original": true, text: ""});
+  if (context.game.step === "managerial") {
+    await fire(context.game, context.value);
+    await checkGameOver(context.game);
+    await saveGame(context.game);
+  }
+});
+
+const lobbyAction: ActionHandler = async ({body, respond, context}) => {
+  const game = context.game;
+  const user = body.user.id;
+  const choice = context.value;
+
+  if (game.step === "lobby") {
+
+    if (choice === "join") {
+      if (Object.keys(game.players).length < 10) {
+        const userInfo = await app.client.users.info({
+          token: context.botToken,
+          user: user,
+        }) as UserInfoResult;
+
+        addPlayer(game, user, userInfo);
+      }
+    } else {
+      removePlayer(game, user);
+    }
+
+    await postLobby(game, respond);
+    await saveGame(game);
+  }
+};
+
+app.action(/^lobby_.*$/, actionMiddleware, lobbyAction);
+
+
 
 (async () => {
   // Start your app
