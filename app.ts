@@ -613,8 +613,8 @@ async function sendFireForm(game: InProgressGame) {
 }
 
 async function vote(game: PostNominateGame, user: string, vote: "ja" | "nein" | "withdraw", respond: RespondFn) {
-  // Make sure user is in game
-  if (!(user in game.players)) {
+  // Make sure user is in game and not fired
+  if (!(user in game.players) || (game.players[user].state === "fired")) {
     return;
   }
 
