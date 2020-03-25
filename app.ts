@@ -65,7 +65,7 @@ const POWERS: {[power in ManagerialPower]: string} = {
   investigate: "Investigate a player",
   special: "Special promotion",
   fire: "Fire a player",
-  peek: "Peak at the top 3 PR cards"
+  peek: "Peek at the top 3 PR cards"
 };
 
 declare module "@slack/bolt/dist/types/middleware" {
