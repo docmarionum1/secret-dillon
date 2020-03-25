@@ -1,6 +1,6 @@
-import { App, Middleware, RespondFn, BlockAction, ButtonAction, SlackAction, SlackActionMiddlewareArgs, AckFn, NextMiddleware } from "@slack/bolt";
-import {ChatPostMessageArguments, WebClient, WebAPICallResult, ActionsBlock, KnownBlock} from '@slack/web-api';
-import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Role, Player, Game, LobbyGame, InProgressGame, NumPlayers, ManagerialPower, Vote, NominateGame, PostNominateGame } from "./secret-dillon";
+import { App, RespondFn } from "@slack/bolt";
+import {ChatPostMessageArguments, ActionsBlock, KnownBlock} from '@slack/web-api';
+import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Game, LobbyGame, InProgressGame, NumPlayers, ManagerialPower, Vote, NominateGame, PostNominateGame } from "./secret-dillon";
 const { Datastore } = require('@google-cloud/datastore');
 
 // Creates a datastore client
@@ -111,6 +111,7 @@ async function newGame(channel: string, botToken: string): Promise<LobbyGame> {
     players: {},
     step: "lobby"
   };
+  clearPins(game);
   //GAMES[channel] = game;
   await createLobby(game);
   return game;
@@ -917,7 +918,7 @@ async function fire(game: InProgressGame, player: string) {
 
 
 
-app.message(/^new$/, async ({ message, context, say }) => {
+app.message(/^new$/, async ({ message, context }) => {
   // TODO: try to Load game
   const game = await loadGame(message.channel);
   if (game) {
