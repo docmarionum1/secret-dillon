@@ -658,7 +658,7 @@ async function tallyVotes(game: InProgressGame) {
 
 async function voteSuccess(game: InProgressGame) {
   // Check if the game is over due to Dillon being promoted
-  if (checkGameOver(game, game.step)) {
+  if (await checkGameOver(game, game.step)) {
     return;
   }
 
