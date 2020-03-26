@@ -7,7 +7,7 @@ import { Datastore } from '@google-cloud/datastore';
 const datastore = new Datastore();
 
 async function saveGame(game: Game) {
-  const datastoreKey = datastore.key(["secret-dillon", "games", game.channel]);
+  const datastoreKey = datastore.key(["secret-dillon", game.channel]);
   try {
     if (game.step === "over") {
       await datastore.delete(datastoreKey);
@@ -24,7 +24,7 @@ async function saveGame(game: Game) {
 }
 
 async function loadGame(channel: string) {
-  const datastoreKey = datastore.key(["secret-dillon", "games", channel]);
+  const datastoreKey = datastore.key(["secret-dillon", channel]);
   const [game] = await datastore.get(datastoreKey);
   return game as Game;
 }
