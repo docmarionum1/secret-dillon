@@ -991,7 +991,7 @@ app.action(/start/, actionMiddleware, async ({ respond, context }) => {
 app.action(/^nominate_.*$/, actionMiddleware, async({respond, context}) => {
   respond({"delete_original": true, text: ""});
   if (context.game.step === "nominate") {
-    nominate(context.game, context.value);
+    await nominate(context.game, context.value);
     await saveGame(context.game);
   }
 });
