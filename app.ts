@@ -873,7 +873,8 @@ async function managerialStep(game: InProgressGame) {
 
 async function peek(game: InProgressGame) {
   await printMessage(game,
-    `The top 3 cards of the deck are \n-${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
+    `The top 3 cards of the deck (starting with the top card) are \n-${game.deck.slice(game.deck.length - 3).reverse().map(
+        card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
     game.manager
   );
   await printMessage(game, `Showing ${name(game, game.manager)} the top three cards of the PR deck.`);
