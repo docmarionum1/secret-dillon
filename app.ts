@@ -82,15 +82,21 @@ const actionMiddleware: ActionHandler = async function ({
 }) {
   ack();
   const value = body.actions[0].value;
-  const [channel, gameId, actionValue] = value.split("_");
+  let [channel, gameId, actionValue] = value.split("_");
 
-  //TODO: Load game from datastore
-  //const game = GAMES[channel];
+  // Sometimes the game ID is in the format gameId:formId
+  // This is to prevent a form from being processed twice
+  // If the formId does not match game.formId then return.
+  let formId: string | undefined = undefined;
+  if (gameId.includes(":")) {
+    [gameId, formId] = gameId.split(":");
+  }
 
   const game = await loadGame(channel);
 
   // Make sure the game exists and its for the right game
-  if (!game || game.gameId !== gameId) {
+  // If the game is correct, make sure we haven't already processed this form
+  if (!game || game.gameId !== gameId || (formId && "formId" in game && formId !== game.formId)) {
     respond({
       "delete_original": true,
       text: "rm"
@@ -98,6 +104,7 @@ const actionMiddleware: ActionHandler = async function ({
     return;
   }
 
+  game.formId = undefined;
   game.botToken = context.botToken;
   context.game = game;
   context.value = actionValue;
@@ -546,6 +553,8 @@ async function sendForm(
 ) {
   await printMessage(game, groupText);
 
+  game.formId = Math.round(Math.random() * 99999999).toString();
+
   // Send the manager a form
   await app.client.chat.postMessage({
     token: game.botToken,
@@ -572,7 +581,7 @@ async function sendForm(
               type: "plain_text",
               text: name(game, player)
             },
-            "value": `${game.channel}_${game.gameId}_${player}`
+            "value": `${game.channel}_${game.gameId}:${game.formId}_${player}`
           };
         })
       }
@@ -695,6 +704,12 @@ async function incrementPromotionTracker(game: InProgressGame) {
     game[randomResult]++;
 
     await printMessage(game, `Due to three rejected promotions in a row, a *${randomResult}* was played from the top of the deck.`);
+
+    // Shuffle if needed
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
 
     // Check if over because of the result
     if (!(await checkGameOver(game))) {
