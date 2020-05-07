@@ -694,6 +694,12 @@ async function incrementPromotionTracker(game: InProgressGame) {
     const randomResult = game.deck.pop() as Card;
     game[randomResult]++;
 
+    // Shuffle if needed
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+
     // Check if over because of the result
     if (!(await checkGameOver(game))) {
       await startNextRound(game);
