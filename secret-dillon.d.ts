@@ -61,6 +61,7 @@ interface BaseGame {
   players: {[playerId: string]: Player};
   pinnedMessage?: string;
   botToken: string;
+  formId?: string;
 }
 
 interface LobbyGame extends BaseGame {

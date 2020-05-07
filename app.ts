@@ -82,15 +82,21 @@ const actionMiddleware: ActionHandler = async function ({
 }) {
   ack();
   const value = body.actions[0].value;
-  const [channel, gameId, actionValue] = value.split("_");
+  let [channel, gameId, actionValue] = value.split("_");
 
-  //TODO: Load game from datastore
-  //const game = GAMES[channel];
+  // Sometimes the game ID is in the format gameId:formId
+  // This is to prevent a form from being processed twice
+  // If the formId does not match game.formId then return.
+  let formId: string | undefined = undefined;
+  if (gameId.includes(":")) {
+    [gameId, formId] = gameId.split(":");
+  }
 
   const game = await loadGame(channel);
 
   // Make sure the game exists and its for the right game
-  if (!game || game.gameId !== gameId) {
+  // If the game is correct, make sure we haven't already processed this form
+  if (!game || game.gameId !== gameId || (formId && "formId" in game && formId !== game.formId)) {
     respond({
       "delete_original": true,
       text: "rm"
@@ -98,6 +104,7 @@ const actionMiddleware: ActionHandler = async function ({
     return;
   }
 
+  game.formId = undefined;
   game.botToken = context.botToken;
   context.game = game;
   context.value = actionValue;
@@ -449,7 +456,7 @@ async function showBallot(game: PostNominateGame) {
   text += "\n*Reviewer Candidate*: " + name(game, game.reviewer!);
   text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
   text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
-  text += "\n*Players that haven't voted*:" + Object.keys(game.players).filter(player => !(player in game.votes)).map(player => name(game, player)).join(", ");
+  text += "\n*Players that haven't voted*:" + game.turnOrder.filter(player => !(player in game.votes)).map(player => name(game, player)).join(", ");
 
   blocks.push({
     "type": "section",
@@ -546,6 +553,8 @@ async function sendForm(
 ) {
   await printMessage(game, groupText);
 
+  game.formId = Math.round(Math.random() * 99999999).toString();
+
   // Send the manager a form
   await app.client.chat.postMessage({
     token: game.botToken,
@@ -572,7 +581,7 @@ async function sendForm(
               type: "plain_text",
               text: name(game, player)
             },
-            "value": `${game.channel}_${game.gameId}_${player}`
+            "value": `${game.channel}_${game.gameId}:${game.formId}_${player}`
           };
         })
       }
@@ -694,10 +703,21 @@ async function incrementPromotionTracker(game: InProgressGame) {
     const randomResult = game.deck.pop() as Card;
     game[randomResult]++;
 
+    await printMessage(game, `Due to three rejected promotions in a row, a *${randomResult}* was played from the top of the deck.`);
+
+    // Shuffle if needed
+    if (game.deck.length < 3) {
+      game.deck = game.deck.concat(game.discard);
+      shuffleArray(game.deck);
+    }
+
     // Check if over because of the result
     if (!(await checkGameOver(game))) {
       await startNextRound(game);
     }
+
+    // Reset ineligible reviewers after a failed promotion
+    game.ineligibleReviewers = [];
 
     return true;
   }
@@ -828,7 +848,7 @@ async function selectCard(game: InProgressGame, indexString: string) {
     const chosen = game.hand.splice(index, 1)[0];
     game[chosen]++;
 
-    await printMessage(game, `${name(game, game.reviewer!)} played ${chosen}.`);
+    await printMessage(game, `${name(game, game.reviewer!)} played *${chosen}*.`);
 
     // Put the other card into discard
     game.discard.push(game.hand.pop()!);
@@ -873,7 +893,8 @@ async function managerialStep(game: InProgressGame) {
 
 async function peek(game: InProgressGame) {
   await printMessage(game,
-    `The top 3 cards of the deck are \n-${game.deck.slice(game.deck.length - 3).map(card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
+    `The top 3 cards of the deck (starting with the top card) are \n-${game.deck.slice(game.deck.length - 3).reverse().map(
+        card => card === "reject" ? "❌ Reject PR" : "✔️ Accept PR").join("\n-")}`,
     game.manager
   );
   await printMessage(game, `Showing ${name(game, game.manager)} the top three cards of the PR deck.`);
@@ -911,7 +932,12 @@ async function fire(game: InProgressGame, player: string) {
   await printMessage(game, `☠️ ${name(game, game.manager)} fired ${name(game, player)}. ☠️`);
 
   game.players[player].state = "fired";
-  game.turnOrder.splice(game.turnOrder.indexOf(player), 1);
+  const index = game.turnOrder.indexOf(player);
+  game.turnOrder.splice(index, 1);
+
+  // Set the managerIndex to the new index of the manager after removing the fired player.
+  game.managerIndex = game.turnOrder.indexOf(game.manager);
+
   if (!(await checkGameOver(game))) {
     startNextRound(game);
   }
