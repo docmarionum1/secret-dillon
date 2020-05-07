@@ -449,7 +449,7 @@ async function showBallot(game: PostNominateGame) {
   text += "\n*Reviewer Candidate*: " + name(game, game.reviewer!);
   text += "\n*Instructions*: Everyone vote Ja! or Nein! for this pair.";
   text += "\n*Votes*: " + Object.keys(game.votes).length + "/" + game.turnOrder.length;
-  text += "\n*Players that haven't voted*:" + Object.keys(game.players).filter(player => !(player in game.votes)).map(player => name(game, player)).join(", ");
+  text += "\n*Players that haven't voted*:" + game.turnOrder.filter(player => !(player in game.votes)).map(player => name(game, player)).join(", ");
 
   blocks.push({
     "type": "section",
@@ -694,10 +694,15 @@ async function incrementPromotionTracker(game: InProgressGame) {
     const randomResult = game.deck.pop() as Card;
     game[randomResult]++;
 
+    await printMessage(game, `Due to three rejected promotions in a row, a *${randomResult}* was played from the top of the deck.`);
+
     // Check if over because of the result
     if (!(await checkGameOver(game))) {
       await startNextRound(game);
     }
+
+    // Reset ineligible reviewers after a failed promotion
+    game.ineligibleReviewers = [];
 
     return true;
   }
@@ -828,7 +833,7 @@ async function selectCard(game: InProgressGame, indexString: string) {
     const chosen = game.hand.splice(index, 1)[0];
     game[chosen]++;
 
-    await printMessage(game, `${name(game, game.reviewer!)} played ${chosen}.`);
+    await printMessage(game, `${name(game, game.reviewer!)} played *${chosen}*.`);
 
     // Put the other card into discard
     game.discard.push(game.hand.pop()!);
@@ -912,7 +917,12 @@ async function fire(game: InProgressGame, player: string) {
   await printMessage(game, `☠️ ${name(game, game.manager)} fired ${name(game, player)}. ☠️`);
 
   game.players[player].state = "fired";
-  game.turnOrder.splice(game.turnOrder.indexOf(player), 1);
+  const index = game.turnOrder.indexOf(player);
+  game.turnOrder.splice(index, 1);
+
+  // Set the managerIndex to the new index of the manager after removing the fired player.
+  game.managerIndex = game.turnOrder.indexOf(game.manager);
+
   if (!(await checkGameOver(game))) {
     startNextRound(game);
   }
