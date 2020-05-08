@@ -389,7 +389,11 @@ async function sendStartMessages(game: InProgressGame) {
       }
 
       if (role === 'dillon' || game.numPlayers <= 6) {
-        message += `\nThe other dillons are: ${game.dillons.filter(id => id !== player).map(id => name(game, id))}`;
+        const other_dillons = game.dillons.filter(id => id !== player).map(id => name(game, id));
+        if (other_dillons.length > 0)
+        {
+          message += `\nThe other dillons are: ${other_dillons}`;
+        }
       }
     }
 
