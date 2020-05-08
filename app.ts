@@ -6,6 +6,27 @@ import { Datastore } from '@google-cloud/datastore';
 // Creates a datastore client
 const datastore = new Datastore();
 
+// Create a lock for handling events that should be handled serially
+const locks: {[channel: string]: boolean} = {};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+} 
+
+async function getLock(channel: string) {
+  while (channel in locks && locks[channel] === false) {
+    await sleep(10);
+  }
+  locks[channel] = true;
+  return true;
+}
+
+function unLock(channel: string) {
+  locks[channel] = false;
+}
+
 async function saveGame(game: Game) {
   const datastoreKey = datastore.key(["secret-dillon", game.channel]);
   try {
@@ -21,6 +42,7 @@ async function saveGame(game: Game) {
     console.log(e);
     console.log(game);
   }
+  unLock(game.channel);
 }
 
 async function loadGame(channel: string) {
@@ -84,6 +106,9 @@ const actionMiddleware: ActionHandler = async function ({
   const value = body.actions[0].value;
   let [channel, gameId, actionValue] = value.split("_");
 
+  // Get a lock on the game to prevent events from happening in parallel
+  await getLock(channel);
+
   // Sometimes the game ID is in the format gameId:formId
   // This is to prevent a form from being processed twice
   // If the formId does not match game.formId then return.
@@ -101,6 +126,7 @@ const actionMiddleware: ActionHandler = async function ({
       "delete_original": true,
       text: "rm"
     });
+    unLock(channel);
     return;
   }
 
@@ -120,7 +146,6 @@ async function newGame(channel: string, botToken: string): Promise<LobbyGame> {
     step: "lobby"
   };
   clearPins(game);
-  //GAMES[channel] = game;
   await createLobby(game);
   return game;
 }
@@ -979,18 +1004,6 @@ app.message(/^new$/, async ({ message, context }) => {
       ]
     });
   } else {
-    //await newGame(message.channel, message.user, context);
-
-    // TODO: Remove below test
-    //const game = GAMES[message.channel];
-    // game.step = "legislative";
-    //game.manager = "U0766LV3J";
-    //game.reviewer = "U0766LV3J";
-    // sendManagerCards(game, context);
-    //sendInvestigateForm(game, context);
-    // sendSpecialForm(game, context);
-    // peak(game, context);
-    // sendFireForm(game, context);
     const game = await newGame(message.channel, context.botToken);
     await saveGame(game);
   }
