@@ -2,30 +2,13 @@ import { App, RespondFn } from "@slack/bolt";
 import {ChatPostMessageArguments, ActionsBlock, KnownBlock} from '@slack/web-api';
 import { ActionHandler, UserInfoResult, PinsListResult, ChatPostMessageResult, Card, GameStep, Game, LobbyGame, InProgressGame, NumPlayers, ManagerialPower, Vote, NominateGame, PostNominateGame } from "./secret-dillon";
 import { Datastore } from '@google-cloud/datastore';
+import AsyncLock from "async-lock";
 
 // Creates a datastore client
 const datastore = new Datastore();
 
 // Create a lock for handling events that should be handled serially
-const locks: {[channel: string]: boolean} = {};
-
-function sleep(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-} 
-
-async function getLock(channel: string) {
-  while (channel in locks && locks[channel] === false) {
-    await sleep(10);
-  }
-  locks[channel] = true;
-  return true;
-}
-
-function unLock(channel: string) {
-  locks[channel] = false;
-}
+const lock = new AsyncLock();
 
 async function saveGame(game: Game) {
   const datastoreKey = datastore.key(["secret-dillon", game.channel]);
@@ -42,7 +25,6 @@ async function saveGame(game: Game) {
     console.log(e);
     console.log(game);
   }
-  unLock(game.channel);
 }
 
 async function loadGame(channel: string) {
@@ -57,8 +39,6 @@ const app = new App({
   signingSecret: process.env.SLACK_SIGNING_SECRET
 });
 
-
-//const GAMES: {[channelId: string]: Game} = {};
 
 /**
  * Randomize array element order in-place.
@@ -102,12 +82,13 @@ declare module "@slack/bolt/dist/types/middleware" {
 const actionMiddleware: ActionHandler = async function ({
   body, ack, respond, context, next
 }) {
-  ack();
+  if (!next) {
+    return;
+  }
+
+  await ack();
   const value = body.actions[0].value;
   let [channel, gameId, actionValue] = value.split("_");
-
-  // Get a lock on the game to prevent events from happening in parallel
-  await getLock(channel);
 
   // Sometimes the game ID is in the format gameId:formId
   // This is to prevent a form from being processed twice
@@ -117,25 +98,33 @@ const actionMiddleware: ActionHandler = async function ({
     [gameId, formId] = gameId.split(":");
   }
 
-  const game = await loadGame(channel);
+  // Get a lock on the game to prevent events from happening in parallel
+  lock.acquire(channel, async (done) => {
+    const game = await loadGame(channel);
 
-  // Make sure the game exists and its for the right game
-  // If the game is correct, make sure we haven't already processed this form
-  if (!game || game.gameId !== gameId || (formId && "formId" in game && formId !== game.formId)) {
-    respond({
-      "delete_original": true,
-      text: "rm"
-    });
-    unLock(channel);
-    return;
-  }
+    // Make sure the game exists and its for the right game
+    // If the game is correct, make sure we haven't already processed this form
+    if (
+      !game ||
+      game.gameId !== gameId ||
+      (formId && "formId" in game && formId !== game.formId)
+    ) {
+      await respond({
+        delete_original: true,
+        text: "",
+      });
+      done();
+      return;
+    }
 
-  game.formId = undefined;
-  game.botToken = context.botToken;
-  context.game = game;
-  context.value = actionValue;
+    game.formId = undefined;
+    game.botToken = context.botToken;
+    context.game = game;
+    context.value = actionValue;
 
-  next();
+    await next();
+    done();
+  });
 };
 
 async function newGame(channel: string, botToken: string): Promise<LobbyGame> {
@@ -266,7 +255,7 @@ async function postLobby (game: LobbyGame, respond?: RespondFn): Promise<ChatPos
   ];
 
   if (respond) {
-    return respond({
+    return await respond({
       blocks: blocks,
       "replace_original": true,
       text: ""
@@ -666,7 +655,7 @@ async function vote(game: PostNominateGame, user: string, vote: "ja" | "nein" | 
   // If everyone has voted
   if (Object.keys(game.votes).length === game.turnOrder.length) {
     await unpinPinnedMessage(game);
-    respond({"delete_original": true, text: "rm ballot"});
+    await respond({"delete_original": true, text: ""});
     await tallyVotes(game);
   } else {
     await showBallot(game);
@@ -1014,8 +1003,8 @@ app.message(/^new$/, async ({ message, context }) => {
 });
 
 app.action("new_game", async ({ body, ack, respond, context }) => {
-  ack();
-  respond({ "delete_original": true, text: "" });
+  await ack();
+  await respond({ "delete_original": true, text: "" });
   const game = await newGame(body.channel!.id, context.botToken);
   await saveGame(game);
 });
@@ -1024,7 +1013,7 @@ app.action(/start/, actionMiddleware, async ({ respond, context }) => {
   const lobby = context.game;
   if (lobby.step === "lobby") {
     await unpinPinnedMessage(lobby);
-    respond({ "delete_original": true, text: "" });
+    await respond({ "delete_original": true, text: "" });
     const game = startGame(lobby);
     await sendStartMessages(game);
     await saveGame(game);
@@ -1032,7 +1021,7 @@ app.action(/start/, actionMiddleware, async ({ respond, context }) => {
 });
 
 app.action(/^nominate_.*$/, actionMiddleware, async({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "nominate") {
     await nominate(context.game, context.value);
     await saveGame(context.game);
@@ -1048,7 +1037,7 @@ app.action(/^vote_.*$/, actionMiddleware, async({body, respond, context}) => {
 });
 
 app.action("veto", actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   const game = context.game;
   if (game.step === "review") {
     const text = `${name(game, game.reviewer)} would like to veto this PR. Do you agree?`;
@@ -1099,7 +1088,7 @@ app.action("veto", actionMiddleware, async ({respond, context}) => {
 });
 
 app.action(/^veto_.*$/, actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "review") {
     await vetoResponse(context.game, context.value as Vote);
     await checkGameOver(context.game);
@@ -1108,7 +1097,7 @@ app.action(/^veto_.*$/, actionMiddleware, async ({respond, context}) => {
 });
 
 app.action(/^selectCard_\d$/, actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "review") {
     await selectCard(context.game, context.value);
     await checkGameOver(context.game);
@@ -1117,7 +1106,7 @@ app.action(/^selectCard_\d$/, actionMiddleware, async ({respond, context}) => {
 });
 
 app.action(/^investigate_.*$/, actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "managerial") {
     await investigate(context.game, context.value);
     await saveGame(context.game);
@@ -1125,7 +1114,7 @@ app.action(/^investigate_.*$/, actionMiddleware, async ({respond, context}) => {
 });
 
 app.action(/^special_.*$/, actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "managerial") {
     await specialPromotion(context.game, context.value);
     await saveGame(context.game);
@@ -1133,7 +1122,7 @@ app.action(/^special_.*$/, actionMiddleware, async ({respond, context}) => {
 });
 
 app.action(/^fire_.*$/, actionMiddleware, async ({respond, context}) => {
-  respond({"delete_original": true, text: ""});
+  await respond({"delete_original": true, text: ""});
   if (context.game.step === "managerial") {
     await fire(context.game, context.value);
     await checkGameOver(context.game);
