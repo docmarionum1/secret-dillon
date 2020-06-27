@@ -726,6 +726,7 @@ async function incrementPromotionTracker(game: InProgressGame) {
     // Shuffle if needed
     if (game.deck.length < 3) {
       game.deck = game.deck.concat(game.discard);
+      game.discard = [];
       shuffleArray(game.deck);
     }
 
@@ -841,6 +842,7 @@ async function vetoResponse(game: InProgressGame, choice: "ja" | "nein") {
     // Shuffle if needed
     if (game.deck.length < 3) {
       game.deck = game.deck.concat(game.discard);
+      game.discard = [];
       shuffleArray(game.deck);
     }
 
@@ -874,6 +876,7 @@ async function selectCard(game: InProgressGame, indexString: string) {
     // If the deck has fewer than 3 cards left, shuffle deck and discard together
     if (game.deck.length < 3) {
       game.deck = game.deck.concat(game.discard);
+      game.discard = [];
       shuffleArray(game.deck);
     }
 
