@@ -953,11 +953,15 @@ async function fire(game: InProgressGame, player: string) {
   await printMessage(game, `☠️ ${name(game, game.manager)} fired ${name(game, player)}. ☠️`);
 
   game.players[player].state = "fired";
+  // Save the old manager index value, since (in the case of a special promotion)
+  // this might not be the same as game.manager.
+  const old_manager = game.turnOrder[managerIndex];
+
   const index = game.turnOrder.indexOf(player);
   game.turnOrder.splice(index, 1);
 
   // Set the managerIndex to the new index of the manager after removing the fired player.
-  game.managerIndex = game.turnOrder.indexOf(game.manager);
+  game.managerIndex = game.turnOrder.indexOf(old_manager);
 
   if (!(await checkGameOver(game))) {
     startNextRound(game);
