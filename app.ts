@@ -53,16 +53,16 @@ function shuffleArray(array: any[]) {
     }
 }
 
-const NUM_LIBBYS: {[numPlayers: number]: number} = {
-  3: 1,
-  4: 2,
-  5: 3,
-  6: 4,
-  7: 4,
-  8: 5,
-  9: 5,
-  10: 6
-};
+// const NUM_LIBBYS: {[numPlayers: number]: number} = {
+//   3: 1,
+//   4: 2,
+//   5: 3,
+//   6: 4,
+//   7: 4,
+//   8: 5,
+//   9: 5,
+//   10: 6
+// };
 
 const POWERS: {[power in ManagerialPower]: string} = {
   investigate: "Investigate a player",
@@ -303,10 +303,10 @@ function startGame(game: LobbyGame): NominateGame {
 
   // Set up deck
   const deck: Card[] = [];
-  for (let i = 0; i < 6; i++) {
-    deck.push("accept");
-  }
-  for (let i = 0; i < 11; i++) {
+  // for (let i = 0; i < 6; i++) {
+  //   deck.push("accept");
+  // }
+  for (let i = 0; i < 17; i++) {
     deck.push("reject");
   }
   shuffleArray(deck);
@@ -314,27 +314,31 @@ function startGame(game: LobbyGame): NominateGame {
   // Set roles for each player
   const playerIds = Object.keys(game.players);
   shuffleArray(playerIds);
-  const numDillons = playerIds.length - NUM_LIBBYS[playerIds.length] - 1;
+  //const numDillons = playerIds.length - NUM_LIBBYS[playerIds.length] - 1;
 
-  // Create the Dillon (captial D)
-  let player = playerIds.pop() as string;
-  const Dillon = player;
-  game.players[player].role = "Dillon";
+  // // Create the Dillon (captial D)
+  // let player = playerIds.pop() as string;
+  // const Dillon = player;
+  // game.players[player].role = "Dillon";
 
-  // Create the dillons (lowercase d)
-  const dillons = [];
-  for (let i = 0; i < numDillons; i++) {
-    let player = playerIds.pop() as string;
-    dillons.push(player);
-    game.players[player].role = "dillon";
-  }
+  // // Create the dillons (lowercase d)
+  // const dillons = [];
+  // for (let i = 0; i < numDillons; i++) {
+  //   let player = playerIds.pop() as string;
+  //   dillons.push(player);
+  //   game.players[player].role = "dillon";
+  // }
 
   // Make the rest libbys
   const libbys = [];
+  let player: string;
   while (player = playerIds.pop() as string) {
     libbys.push(player);
     game.players[player].role = "libby";
   }
+
+  const Dillon = "";
+  const dillons: string[] = [];
 
   return {
     ...game,
@@ -756,7 +760,7 @@ async function checkGameOver(game: InProgressGame, step?: GameStep): Promise<boo
     // dillons win because Dillon promoted to reviewer after 3 rejected PRs
     gameOver = true;
     message = `${name(game, game.Dillon)} was Dillon and became code reviewer!\n:nollid: dillons win! :dillon:`;
-  } else if (game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
+  } else if ((game.Dillon in game.players) && game.players[game.Dillon].state === "fired") { // libbys win because they fired Dillon
     gameOver = true;
     message = `${name(game, game.Dillon)} was Dillon!\n:orange: libbys win! :orange:`;
   }
@@ -953,7 +957,7 @@ async function fire(game: InProgressGame, player: string) {
   await printMessage(game, `☠️ ${name(game, game.manager)} fired ${name(game, player)}. ☠️`);
 
   game.players[player].state = "fired";
-  
+
   // Save the old manager index value, since (in the case of a special promotion)
   // this might not be the same as game.manager.
   const old_manager = game.turnOrder[game.managerIndex];
